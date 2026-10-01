@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "agent-chat",
+  "version": "2.0.0",
+  "description": "Isolated chat MCP server and read-only viewer",
+  "compatibility": "shellstudio-v1",
+  "origin": "bundled:MIT upstream agent-chat 2.0.0",
+  "license": "MIT",
+  "dependencies": [
+    "python3"
+  ],
+  "detection": {
+    "executable": "{extension}/venv/bin/python",
+    "args": [
+      "--version"
+    ]
+  },
+  "installation": {
+    "kind": "python-bundle"
+  },
+  "commands": {},
+  "profiles": {
+    "default": {
+      "executable": "{shellstudio}",
+      "args": [
+        "viewer",
+        "agent-chat"
+      ],
+      "env": {}
+    }
+  },
+  "default_profile": "default",
+  "mcp": {
+    "name": "agent-chat",
+    "command": {
+      "executable": "{extension}/venv/bin/python",
+      "args": [
+        "-I",
+        "-m",
+        "server",
+        "chat"
+      ],
+      "env": {
+        "AGENT_CHAT_DB": "{data}/messages.sqlite3"
+      }
+    }
+  }
+}

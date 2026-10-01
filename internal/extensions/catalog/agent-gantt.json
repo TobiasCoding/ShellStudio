@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "agent-gantt",
+  "version": "2.0.0",
+  "description": "Isolated gantt MCP server and read-only viewer",
+  "compatibility": "shellstudio-v1",
+  "origin": "bundled:MIT upstream agent-gantt 2.0.0",
+  "license": "MIT",
+  "dependencies": [
+    "python3"
+  ],
+  "detection": {
+    "executable": "{extension}/venv/bin/python",
+    "args": [
+      "--version"
+    ]
+  },
+  "installation": {
+    "kind": "python-bundle"
+  },
+  "commands": {},
+  "profiles": {
+    "default": {
+      "executable": "{shellstudio}",
+      "args": [
+        "viewer",
+        "agent-gantt"
+      ],
+      "env": {}
+    }
+  },
+  "default_profile": "default",
+  "mcp": {
+    "name": "agent-gantt",
+    "command": {
+      "executable": "{extension}/venv/bin/python",
+      "args": [
+        "-I",
+        "-m",
+        "server",
+        "gantt"
+      ],
+      "env": {
+        "AGENT_GANTT_DB": "{data}/projects.sqlite3"
+      }
+    }
+  }
+}

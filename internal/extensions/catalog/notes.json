@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "notes",
+  "version": "1.0.0",
+  "description": "Global notes with autosave, search, trash and Markdown export",
+  "compatibility": "shellstudio-v1",
+  "origin": "bundled:ShellStudio",
+  "license": "GPL-3.0-only",
+  "dependencies": [],
+  "detection": {
+    "executable": "{shellstudio}",
+    "args": [
+      "--version"
+    ]
+  },
+  "installation": {
+    "kind": "builtin"
+  },
+  "commands": {},
+  "profiles": {
+    "default": {
+      "executable": "{shellstudio}",
+      "args": [
+        "notes"
+      ],
+      "env": {}
+    }
+  },
+  "default_profile": "default"
+}

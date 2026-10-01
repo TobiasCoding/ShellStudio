@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "htop",
+  "version": "1.0.0",
+  "description": "Open the system process monitor",
+  "compatibility": "shellstudio-v1",
+  "origin": "local:user",
+  "license": "GPL-2.0-or-later",
+  "dependencies": [],
+  "detection": {"executable": "htop", "args": ["--version"]},
+  "installation": {"kind": "existing"},
+  "commands": {},
+  "profiles": {"default": {"executable": "htop", "args": [], "env": {}}},
+  "default_profile": "default"
+}

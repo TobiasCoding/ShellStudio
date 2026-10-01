@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "id": "claude",
+  "version": "2.1.287",
+  "description": "Claude Code console",
+  "compatibility": "shellstudio-v1",
+  "origin": "https://www.npmjs.com/package/@anthropic-ai/claude-code",
+  "license": "Proprietary (Anthropic commercial terms)",
+  "dependencies": [],
+  "detection": {
+    "executable": "claude",
+    "args": [
+      "--version"
+    ]
+  },
+  "installation": {
+    "kind": "artifact",
+    "artifacts": {
+      "linux/amd64": {
+        "url": "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-2.1.287.tgz",
+        "sha256": "348090e889baacf20e6665fd236e2bc617767eb733407151128efd0281a06111",
+        "member": "package/claude"
+      },
+      "linux/arm64": {
+        "url": "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-arm64/-/claude-code-linux-arm64-2.1.287.tgz",
+        "sha256": "33ae16d93e1e82b9de10684b540650a9ffbb654eb317e4bfc1ff0f932816f1bc",
+        "member": "package/claude"
+      }
+    }
+  },
+  "commands": {},
+  "profiles": {
+    "default": {
+      "executable": "claude",
+      "args": [],
+      "env": {}
+    }
+  },
+  "default_profile": "default"
+}

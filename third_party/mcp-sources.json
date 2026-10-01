@@ -1,0 +1,8 @@
+{
+  "internal/extensions/bundles/agent-gantt/agent_gantt.py": "da52534e7b497a6b220b4567b0b1466640bd60f9d353312677e4cb493cf78853",
+  "internal/extensions/bundles/agent-gantt/LICENSE": "00195fa9a4ce74dd1bbcc8893cadf171fdba8e581e1aa9fa176e1e7a44767d4f",
+  "internal/extensions/bundles/agent-gantt/server.py": "ff5871134b09dfbeca14033abb93b5bc4e2a4c23b8aa47ffb4477e10c3176264",
+  "internal/extensions/bundles/agent-chat/LICENSE": "00195fa9a4ce74dd1bbcc8893cadf171fdba8e581e1aa9fa176e1e7a44767d4f",
+  "internal/extensions/bundles/agent-chat/agent_chat.py": "f77a3287a5154b5172d471cdba5775657cd51e4986825010adec6940c38cff97",
+  "internal/extensions/bundles/agent-chat/server.py": "ff5871134b09dfbeca14033abb93b5bc4e2a4c23b8aa47ffb4477e10c3176264"
+}

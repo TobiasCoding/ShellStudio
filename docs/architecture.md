@@ -1,0 +1,45 @@
+# Architecture
+
+Bubble Tea clients share a SQLite metadata store. Each UI client and logical view
+has a private presentation session on views.sock. Its panes attach as clients to
+programs.sock, which owns the persistent processes. Removing presentation panes
+does not end programs. Each client has independent focus and presentation layout.
+
+The executable embeds its catalog, JSON schema and MIT Python packages. Metadata
+uses versioned transactional migrations, WAL, FULL synchronous writes, foreign
+keys and a busy timeout on every connection. Schema 2 is current; newer schemas
+are rejected. Existing data is never silently reset after an integrity failure.
+
+The program server invokes the private _exec entry point with a console ID. It
+loads saved argv/environment, changes directory and calls execve. Manifest fields
+never become shell source. Relays and explorer UIs are presentation processes.
+Stable console IDs reconcile membership. Focus, attach and resize reuse panes.
+Stale IDs can fall back only for navigation; destructive actions reject them.
+Normal UI exit removes its presentation sessions. Abrupt kills can leave orphan
+presentation sessions, but cannot lose durable console metadata.
+
+tmux handles resize and terminal output natively. Commands are batched and have
+a five-second deadline. Subprocess output is limited to 64 KiB, downloads to
+256 MiB, extracted executables to 512 MiB, manifests to 256 KiB, previews to
+64 KiB and directory lists to 2,000 entries. Notes lists return 200 summaries;
+bodies are limited to 4 MiB. Search has a two-second deadline. Read-only viewers
+load at most 200 rows once every two seconds. Timed-out installers have their
+process groups terminated.
+
+Each Notes editor permits one save in flight. Revision compare-and-swap and a
+conflict-copy insert happen inside one transaction. The committed revision is
+returned only after Commit succeeds. New edits arriving during a commit remain
+pending. Failures retain text and display the actual error.
+
+Extensions are manifests and external processes, not loaded Go plugins. Invalid
+entries do not block Terminal. Private staging and verification precede the active
+receipt. Partial installs never activate. HTTPS artifacts require a pinned SHA-256.
+MCP packages use separate venvs to isolate their upstream module names.
+
+MCP preview/apply checks the original file hash and rejects name conflicts.
+Claude JSON retains unknown entries. Codex TOML retains original text and appends
+one table. A private backup must succeed before atomic replacement.
+
+Configuration writes use nonblocking advisory locks, atomic replacement and file
+plus directory fsync. Events retain 1,000 entries with details capped at 4 KiB.
+Program transcripts are not logged by ShellStudio.

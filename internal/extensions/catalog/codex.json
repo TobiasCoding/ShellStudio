@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "id": "codex",
+  "version": "0.160.0",
+  "description": "OpenAI Codex console",
+  "compatibility": "shellstudio-v1",
+  "origin": "https://github.com/openai/codex",
+  "license": "Apache-2.0",
+  "dependencies": [],
+  "detection": {
+    "executable": "codex",
+    "args": [
+      "--version"
+    ]
+  },
+  "installation": {
+    "kind": "artifact",
+    "artifacts": {
+      "linux/amd64": {
+        "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.160.0-linux-x64.tgz",
+        "sha256": "37a41d61c3399182b8c727b77090cc7a1566bd849d0f09070a0bbc6fec4c58dc",
+        "member": "package/vendor/x86_64-unknown-linux-musl/bin/codex"
+      },
+      "linux/arm64": {
+        "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.160.0-linux-arm64.tgz",
+        "sha256": "9286a7e01d500ab224c9e5b4b223b7adf5dd901fba23efd6a438316426798b17",
+        "member": "package/vendor/aarch64-unknown-linux-musl/bin/codex"
+      }
+    }
+  },
+  "commands": {},
+  "profiles": {
+    "default": {
+      "executable": "codex",
+      "args": [],
+      "env": {}
+    }
+  },
+  "default_profile": "default"
+}
