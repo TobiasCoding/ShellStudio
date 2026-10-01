@@ -22,10 +22,10 @@ WORK = ROOT / ".work"
 
 
 class Terminal:
-    def __init__(self, env, *args):
+    def __init__(self, env, *args, cwd=ROOT):
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
-            os.chdir(ROOT)
+            os.chdir(cwd)
             os.execve(str(BINARY), [str(BINARY), *args], env)
         self.output = b""
         self.resize(100, 30)
@@ -87,7 +87,8 @@ class Integration(unittest.TestCase):
         WORK.mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(prefix="it-", dir=WORK)
         self.root = Path(self.temp.name)
-        self.env = {**os.environ, "TERM": "xterm-256color", "SHELL": "/bin/sh"}
+        self.env = {**os.environ, "TERM": "xterm-256color", "SHELL": "/bin/sh",
+                    "SHELLSTUDIO_NO_UPDATE_CHECK": "1"}
         self.env.pop("TMUX", None)
         for k, sub in [("XDG_CONFIG_HOME", "c"), ("XDG_DATA_HOME", "d"),
                        ("XDG_STATE_HOME", "s"), ("XDG_RUNTIME_DIR", "r")]:
@@ -118,9 +119,26 @@ class Integration(unittest.TestCase):
         return p.stdout.strip()
 
     def terminal(self, *args):
+        if not args:
+            args = ("--menu",)
         t = Terminal(self.env, *args)
         self.terms.append(t)
         return t
+
+    def test_current_and_explicit_directory_workspace(self):
+        folder = self.root / "project with spaces"
+        folder.mkdir()
+        for args, cwd in [((), folder), ((".",), folder), ((str(folder),), ROOT)]:
+            terminal = Terminal(self.env, *args, cwd=cwd)
+            self.terms.append(terminal)
+            terminal.expect(str(folder))
+            terminal.expect("t Terminal")
+            terminal.close()
+            self.terms.remove(terminal)
+        views = json.loads(self.cli("views"))
+        self.assertEqual(len(views), 1)
+        self.assertEqual(views[0]["Folder"], str(folder))
+        self.assertIn(self.cli("consoles").strip(), ("null", "[]"))
 
     def test_two_clients_resize_reconnect_and_process_survival(self):
         folder = self.root / "folder with spaces"

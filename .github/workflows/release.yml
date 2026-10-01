@@ -1,0 +1,42 @@
+name: Publish release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate stable version tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.12'
+          cache: true
+      - run: sudo apt-get update && sudo apt-get install -y tmux python3-venv
+      - run: make check VERSION="$VERSION"
+      - run: make release VERSION="$VERSION" SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"
+      - name: Publish verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" --verify-tag --draft --title "ShellStudio $TAG" --generate-notes \
+            dist/shellstudio-linux-amd64 dist/shellstudio-linux-arm64 \
+            "dist/shellstudio-$VERSION-source.tar.gz" dist/SHA256SUMS \
+            dist/LICENSE dist/THIRD_PARTY_NOTICES.md
+          gh release edit "$TAG" --draft=false --latest

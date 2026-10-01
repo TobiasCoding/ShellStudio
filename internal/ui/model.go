@@ -104,6 +104,11 @@ func New(a *app.App, screen string) *Model {
 func (m *Model) Init() tea.Cmd {
 	return tea.Batch(tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) }), textinput.Blink)
 }
+func (m *Model) OpenWorkspace(v store.View) {
+	m.ViewID = v.ID
+	m.folder = v.Folder
+	m.goTo("consoles")
+}
 func (m *Model) fail(e error) {
 	if e != nil {
 		m.Status = "Error: " + e.Error()

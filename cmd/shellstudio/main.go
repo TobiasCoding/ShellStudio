@@ -23,7 +23,7 @@ import (
 	"shellstudio/internal/ui"
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
 
 func main() {
 	syscall.Umask(0077)
@@ -41,8 +41,42 @@ func printJSON(v any) error {
 	return nil
 }
 func run(args []string) error {
+	workspace, menu := false, false
+	folder := ""
+	if len(args) > 0 && args[0] == "--menu" {
+		menu = true
+		args = args[1:]
+		if len(args) != 0 {
+			return errors.New("usage: shellstudio --menu")
+		}
+	}
+	if !menu && (len(args) == 0 || args[0] == "open" || args[0] == "." || args[0] == ".." || strings.Contains(args[0], "/")) {
+		workspace = true
+		if len(args) > 0 && args[0] == "open" {
+			args = args[1:]
+		}
+		if len(args) > 1 {
+			return errors.New("usage: shellstudio [DIRECTORY] or shellstudio open DIRECTORY")
+		}
+		if len(args) == 1 {
+			folder = args[0]
+		}
+		args = nil
+	}
+	if !workspace && !menu && len(args) == 1 {
+		if info, e := os.Stat(args[0]); e == nil && info.IsDir() && !reservedCommand(args[0]) {
+			workspace = true
+			folder = args[0]
+			args = nil
+		}
+	}
 	if len(args) > 0 {
 		switch args[0] {
+		case "update":
+			if len(args) > 2 || (len(args) == 2 && args[1] != "--check") {
+				return errors.New("usage: shellstudio update [--check]")
+			}
+			return startupUpdate(true, len(args) == 2)
 		case "version", "--version":
 			fmt.Println("ShellStudio", version)
 			return nil
@@ -71,6 +105,11 @@ func run(args []string) error {
 			for {
 				time.Sleep(time.Hour)
 			}
+		}
+	}
+	if workspace || menu || (len(args) > 0 && args[0] == "notes") {
+		if e := startupUpdate(false, false); e != nil {
+			return e
 		}
 	}
 	a, e := app.Open()
@@ -231,6 +270,13 @@ func run(args []string) error {
 		screen = "notes"
 	}
 	model := ui.New(a, screen)
+	if workspace {
+		v, e := a.Workspace(folder)
+		if e != nil {
+			return e
+		}
+		model.OpenWorkspace(v)
+	}
 	defer a.Mux.Cleanup(model.Client)
 	if len(args) > 0 && args[0] == "viewer" {
 		if len(args) < 2 || len(args) > 3 {
@@ -323,7 +369,10 @@ func doctor(a *app.App) error {
 const help = `ShellStudio — persistent consoles, views, extensions and global notes
 
 Usage:
-  shellstudio                         Open the TUI
+  shellstudio [DIRECTORY]              Open the current or selected folder
+  shellstudio open DIRECTORY           Open a folder named like a CLI command
+  shellstudio --menu                   Open the saved views menu
+  shellstudio update [--check]         Check releases; ask before installing
   shellstudio notes                   Open global Notes
   shellstudio viewer KIND [DATABASE]  Read-only agent-chat / agent-gantt viewer
   shellstudio doctor                  Check storage, dependencies and extensions
@@ -340,5 +389,6 @@ Usage:
 TUI: Tab changes section; ? shows SSH help; F10 leaves a tmux view.
 Closing the UI preserves programs. Restarting the computer stops them.
 Storage follows XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME and XDG_RUNTIME_DIR.
+Set SHELLSTUDIO_NO_UPDATE_CHECK=1 to skip the startup release check.
 ShellStudio is GPL-3.0-only; bundled MCP servers retain their MIT licenses.
 `
