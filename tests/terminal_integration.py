@@ -126,18 +126,30 @@ class Integration(unittest.TestCase):
         return t
 
     def test_current_and_explicit_directory_workspace(self):
-        folder = self.root / "project with spaces"
-        folder.mkdir()
+        self.assert_directory_workspace(self.root / "project with spaces")
+
+    def test_directory_workspace_with_path_wider_than_terminal(self):
+        # Keep sockets under the short test root while making the project path
+        # wider than the 100-column PTY, regardless of the checkout location.
+        folder = self.root / ("long-parent-" * 12) / "project with spaces"
+        self.assertGreater(len(str(folder)), 100)
+        self.assert_directory_workspace(folder)
+
+    def assert_directory_workspace(self, folder):
+        folder.mkdir(parents=True)
         for args, cwd in [((), folder), ((".",), folder), ((str(folder),), ROOT)]:
-            terminal = Terminal(self.env, *args, cwd=cwd)
-            self.terms.append(terminal)
-            terminal.expect(str(folder))
-            terminal.expect("t Terminal")
-            terminal.close()
-            self.terms.remove(terminal)
-        views = json.loads(self.cli("views"))
-        self.assertEqual(len(views), 1)
-        self.assertEqual(views[0]["Folder"], str(folder))
+            with self.subTest(args=args, cwd=str(cwd)):
+                terminal = Terminal(self.env, *args, cwd=cwd)
+                self.terms.append(terminal)
+                # Terminal rendering clips long titles. Check the screen using
+                # its short view name, and the full path through persisted data.
+                terminal.expect(f"{folder.name} · tiled · ")
+                terminal.expect("t Terminal")
+                views = json.loads(self.cli("views"))
+                self.assertEqual(len(views), 1)
+                self.assertEqual(views[0]["Folder"], str(folder))
+                terminal.close()
+                self.terms.remove(terminal)
         self.assertIn(self.cli("consoles").strip(), ("null", "[]"))
 
     def test_two_clients_resize_reconnect_and_process_survival(self):

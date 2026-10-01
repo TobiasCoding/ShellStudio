@@ -1,8 +1,9 @@
-# ShellStudio
 
-![ShellStudio](logo.png)
+<div align="center">
+<img src="logo.svg" width="40%"/>
+</div>
 
-A standalone Linux terminal workspace for local terminals, WSL and SSH.
+Shell Studio is a standalone Linux terminal workspace for local terminals, WSL and SSH.
 Persistent consoles live in a private tmux server. Bubble Tea provides views,
 the file explorer, global Notes, extension management and forms.
 
