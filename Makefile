@@ -27,7 +27,7 @@ release: | $(TMPDIR)
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o dist/shellstudio-linux-arm64 ./cmd/shellstudio
 	cp LICENSE README.md THIRD_PARTY_NOTICES.md dist/
 	cp -R third_party dist/
-	tar --sort=name --mtime='@$(SOURCE_DATE_EPOCH)' --owner=0 --group=0 --numeric-owner --exclude='__pycache__' --exclude='*.pyc' -czf dist/shellstudio-$(VERSION)-source.tar.gz .github .gitignore Makefile go.mod go.sum LICENSE README.md CONTRIBUTING.md SECURITY.md THIRD_PARTY_NOTICES.md logo.png cmd internal tests scripts docs examples third_party
+	tar --sort=name --mtime='@$(SOURCE_DATE_EPOCH)' --owner=0 --group=0 --numeric-owner --exclude='__pycache__' --exclude='*.pyc' -czf dist/shellstudio-$(VERSION)-source.tar.gz .github .gitignore Makefile go.mod go.sum LICENSE README.md CONTRIBUTING.md SECURITY.md THIRD_PARTY_NOTICES.md logo.svg cmd internal tests scripts docs examples third_party
 	cd dist && sha256sum shellstudio-linux-* shellstudio-$(VERSION)-source.tar.gz LICENSE THIRD_PARTY_NOTICES.md > SHA256SUMS
 clean:
 	rm -rf bin dist .work
