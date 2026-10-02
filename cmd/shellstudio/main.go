@@ -302,7 +302,7 @@ func run(args []string) error {
 	if len(args) == 2 && args[0] == "_explorer" {
 		model.SetExplorer(args[1])
 	}
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithFilter(discardTerminalProbe))
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGHUP, syscall.SIGTERM)
 	defer signal.Stop(sig)
@@ -318,6 +318,22 @@ func run(args []string) error {
 	_, e = p.Run()
 	return e
 }
+
+// Terminal device-attribute replies are not user keystrokes. Some remote
+// terminals deliver them as runes after ShellStudio or an embedded program
+// has probed capabilities; discard them so they cannot leak into forms.
+func discardTerminalProbe(_ tea.Model, msg tea.Msg) tea.Msg {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return msg
+	}
+	s := key.String()
+	if (strings.HasPrefix(s, "?61;") || strings.HasPrefix(s, ">0;")) && strings.HasSuffix(s, "c") {
+		return nil
+	}
+	return msg
+}
+
 func doctor(a *app.App) error {
 	failed := false
 	report := func(label string, e error) {

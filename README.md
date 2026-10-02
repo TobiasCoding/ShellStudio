@@ -100,16 +100,20 @@ for publishing versions that the installer and updater can discover.
 ## Workspace
 
 Press n in Views to create a view with a base folder. Enter opens its console
-list; t launches Terminal, n selects an enabled extension. A blank launch folder
-uses the view's folder, then ShellStudio's launch directory. Ctrl+F opens the
-folder picker; Ctrl+R shows recent folders. Existing consoles keep their folders.
+list; t opens a dialog to create a Terminal, and n selects an enabled extension.
+A blank launch folder uses the view's folder, then ShellStudio's launch directory.
+Ctrl+F opens the folder picker; Ctrl+R shows recent folders. Existing consoles
+keep their folders.
 
-Enter opens a tmux view. F6 changes panel, F4 zooms, F10 returns to the menu.
+The menu navigation at the top is clickable. In the console list, the left Files
+panel shows the view folder; click a folder or focus it with F6, then use the
+arrow keys and Enter to browse or preview files. F6 changes tmux panels after
+Enter opens a tmux view; F4 zooms, F10 returns to the menu.
 Mouse clicks focus panels; drag borders to resize. Clients have independent focus.
 Closing the UI or SSH connection preserves programs. After a machine restart,
 saved consoles are stopped; r explicitly relaunches one.
 
-In the console list: f edits the view; b toggles its explorer; l selects layout;
+In the console list: f edits the view; b toggles the tmux explorer; l selects layout;
 a links an existing console; d unlinks it; [ / ] moves it; x stops its program.
 The explorer supports filtering, preview, e for an external editor, r to rename,
 and c to copy a path using OSC 52.

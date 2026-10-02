@@ -81,9 +81,14 @@ type Model struct {
 	saveStatus                           string
 	folder, folderSearch, folderBack     string
 	entries                              []explorer.Entry
+	treePath                             string
+	treeEntries                          []explorer.Entry
+	treeIndex                            int
+	treeFocus                            bool
 	pick                                 func(string)
 	choice                               func(string) tea.Cmd
 	viewerKind, viewerPath, viewerFilter string
+	textBack                             string
 	viewerLast                           time.Time
 }
 
@@ -107,6 +112,10 @@ func (m *Model) Init() tea.Cmd {
 func (m *Model) OpenWorkspace(v store.View) {
 	m.ViewID = v.ID
 	m.folder = v.Folder
+	m.treePath = v.Folder
+	if m.treePath == "" {
+		m.treePath = m.App.CWD
+	}
 	m.goTo("consoles")
 }
 func (m *Model) fail(e error) {
@@ -125,6 +134,20 @@ func (m *Model) refresh() {
 			m.Rows = append(m.Rows, Row{x.ID, x.Name + "  ·  " + x.Folder})
 		}
 	case "consoles":
+		if v, e := m.App.Store.View(m.ViewID); e == nil {
+			if m.treePath == "" {
+				m.treePath = v.Folder
+				if m.treePath == "" {
+					m.treePath = m.App.CWD
+				}
+			}
+			if entries, err := explorer.List(m.treePath, ""); err == nil {
+				m.treeEntries = entries
+			} else {
+				m.treeEntries = nil
+				m.fail(err)
+			}
+		}
 		cs, e := m.App.Store.Consoles(m.ViewID)
 		m.fail(e)
 		m.consoles = cs
@@ -361,17 +384,88 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case tea.MouseMsg:
+		if !m.busy && (m.Screen == "views" || m.Screen == "consoles" || m.Screen == "notes" || m.Screen == "extensions" || m.Screen == "files") && v.Button == tea.MouseButtonLeft && v.Action == tea.MouseActionPress && v.Y == 0 {
+			for _, tab := range []struct {
+				name       string
+				start, end int
+			}{{"views", 14, 19}, {"notes", 22, 27}, {"extensions", 30, 40}, {"files", 43, 48}} {
+				if v.X >= tab.start && v.X < tab.end {
+					if tab.name == "files" {
+						m.folder = m.App.CWD
+						m.folderBack = ""
+						m.pick = nil
+					}
+					m.goTo(tab.name)
+					return m, nil
+				}
+			}
+		}
+		if !m.busy && m.Screen == "form" && m.Width >= 70 && v.Button == tea.MouseButtonLeft && v.Action == tea.MouseActionPress {
+			contentHeight := max(1, m.Height-9)
+			cardHeight := 7 + 5*len(m.fields)
+			cardTop := 4 + max(0, (contentHeight-cardHeight)/2)
+			firstField := cardTop + 4
+			fieldRow := v.Y - firstField
+			if fieldRow >= 0 && fieldRow < 5*len(m.fields) {
+				idx := fieldRow / 5
+				m.fields[m.field].Input.Blur()
+				m.field = idx
+				return m, m.fields[m.field].Input.Focus()
+			}
+			buttonRow := firstField + 5*len(m.fields)
+			if v.Y == buttonRow {
+				if v.X >= m.Width/2 {
+					m.goTo(m.formBack)
+					return m, nil
+				}
+				values := make([]string, 0, len(m.fields))
+				for _, field := range m.fields {
+					values = append(values, field.Input.Value())
+				}
+				return m, m.submit(values)
+			}
+		}
 		if m.Screen != "editor" && m.Screen != "form" && m.Screen != "confirm" && m.Screen != "viewer" && m.Screen != "text" {
-			if v.Button == tea.MouseButtonWheelDown {
-				m.Index = min(len(m.Rows)-1, m.Index+1)
+			if m.Screen == "consoles" && m.Width >= 70 && v.Button == tea.MouseButtonLeft && v.Action == tea.MouseActionPress {
+				sidebarWidth := max(22, min(34, m.Width/3))
+				if v.X < sidebarWidth {
+					idx := v.Y - 6
+					if idx >= 0 && idx < len(m.treeEntries) {
+						m.treeIndex, m.treeFocus = idx, true
+						return m, m.activateTree()
+					}
+					return m, nil
+				}
 			}
-			if v.Button == tea.MouseButtonWheelUp {
-				m.Index = max(0, m.Index-1)
+			if v.Button == tea.MouseButtonWheelDown || v.Button == tea.MouseButtonWheelUp {
+				delta := 1
+				if v.Button == tea.MouseButtonWheelUp {
+					delta = -1
+				}
+				if m.Screen == "consoles" && m.Width >= 70 && v.X < max(22, min(34, m.Width/3)) {
+					m.treeIndex = max(0, min(max(0, len(m.treeEntries)-1), m.treeIndex+delta))
+					m.treeFocus = true
+				} else {
+					m.Index = max(0, min(max(0, len(m.Rows)-1), m.Index+delta))
+					if m.Screen == "consoles" {
+						m.treeFocus = false
+					}
+				}
 			}
-			if v.Button == tea.MouseButtonLeft && v.Action == tea.MouseActionPress {
+			if m.Screen == "choice" && v.Button == tea.MouseButtonLeft && v.Action == tea.MouseActionPress {
+				cardHeight := len(m.Rows) + 6
+				firstRow := 4 + max(0, (m.Height-9-cardHeight)/2) + 4
+				idx := v.Y - firstRow
+				if idx >= 0 && idx < len(m.Rows) {
+					m.Index = idx
+					return m, m.activate()
+				}
+			}
+			if m.Screen != "choice" && v.Button == tea.MouseButtonLeft && v.Action == tea.MouseActionPress {
 				idx := v.Y - 4 + m.offset()
 				if idx >= 0 && idx < len(m.Rows) {
 					m.Index = idx
+					m.treeFocus = false
 					return m, m.activate()
 				}
 			}
@@ -407,7 +501,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.goTo(m.formBack)
 				return m, nil
 			}
-			if k == "ctrl+f" && strings.Contains(strings.ToLower(m.fields[m.field].Label), "folder") {
+			if k == "ctrl+f" && (strings.Contains(strings.ToLower(m.fields[m.field].Label), "folder") || strings.Contains(strings.ToLower(m.fields[m.field].Label), "carpeta")) {
 				m.folderBack = "form"
 				m.folder = m.App.CWD
 				if p, e := platform.Directory(m.fields[m.field].Input.Value(), "", m.App.CWD); e == nil {
@@ -418,7 +512,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.goTo("files")
 				return m, nil
 			}
-			if k == "ctrl+r" && strings.Contains(strings.ToLower(m.fields[m.field].Label), "folder") {
+			if k == "ctrl+r" && (strings.Contains(strings.ToLower(m.fields[m.field].Label), "folder") || strings.Contains(strings.ToLower(m.fields[m.field].Label), "carpeta")) {
 				c, e := platform.LoadConfig(m.App.Paths.Config)
 				m.fail(e)
 				rows := []Row{}
@@ -501,6 +595,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.goTo(tabs[i%4])
 			return m, nil
 		}
+		if m.Screen == "consoles" && (k == "f6" || k == "ctrl+e") {
+			m.treeFocus = !m.treeFocus
+			return m, nil
+		}
+		if m.Screen == "consoles" && m.treeFocus {
+			switch k {
+			case "up", "k":
+				m.treeIndex = max(0, m.treeIndex-1)
+				return m, nil
+			case "down", "j":
+				m.treeIndex = min(max(0, len(m.treeEntries)-1), m.treeIndex+1)
+				return m, nil
+			case "enter":
+				return m, m.activateTree()
+			}
+		}
 		if k == "up" || k == "k" {
 			m.Index = max(0, m.Index-1)
 			return m, nil
@@ -559,6 +669,10 @@ func (m *Model) activate() tea.Cmd {
 	switch m.Screen {
 	case "views":
 		m.ViewID = id
+		if v, err := m.App.Store.View(id); err == nil {
+			m.treePath = v.Folder
+			m.treeIndex = 0
+		}
 		m.goTo("consoles")
 	case "consoles":
 		return m.attach()
@@ -597,12 +711,34 @@ func (m *Model) activate() tea.Cmd {
 				m.fail(err)
 				if err == nil {
 					m.viewport.SetContent(s)
+					m.textBack = "files"
 					m.Screen = "text"
 				}
 			}
 		}
 	case "choice":
 		return m.choice(id)
+	}
+	return nil
+}
+
+func (m *Model) activateTree() tea.Cmd {
+	if m.treeIndex < 0 || m.treeIndex >= len(m.treeEntries) {
+		return nil
+	}
+	e := m.treeEntries[m.treeIndex]
+	if e.Dir {
+		m.treePath = e.Path
+		m.treeIndex = 0
+		m.refresh()
+		return nil
+	}
+	preview, err := explorer.Preview(e.Path)
+	m.fail(err)
+	if err == nil {
+		m.viewport.SetContent(preview)
+		m.textBack = "consoles"
+		m.Screen = "text"
 	}
 	return nil
 }
@@ -692,6 +828,7 @@ func (m *Model) key(k string) tea.Cmd {
 				}
 				v.Name = vals[0]
 				v.Folder = p
+				m.treePath = p
 				e = m.App.Store.UpdateView(v)
 				m.fail(e)
 				if e == nil {
@@ -871,7 +1008,12 @@ func (m *Model) launchForm(terminal bool) {
 			sort.Strings(keys)
 			profiles = strings.Join(keys, ", ")
 		}
-		m.form("Launch "+id+" · profiles: "+profiles, "consoles", []string{"Console name", "Profile (blank uses default)", "Folder (blank uses view; Ctrl+F picker, Ctrl+R recent)"}, []string{id, "", ""}, func(v []string) tea.Cmd {
+		title := "Nueva consola"
+		if id == "terminal" {
+			title = "Nueva terminal"
+		}
+		profileLabel := "Perfil (opciones: " + profiles + "; vacío usa el predeterminado)"
+		m.form(title, "consoles", []string{"Nombre", profileLabel, "Carpeta de trabajo (vacía usa la carpeta de la vista)"}, []string{id, "", ""}, func(v []string) tea.Cmd {
 			view := m.ViewID
 			return m.op(func() (any, error) { return m.App.Launch(view, v[0], id, v[1], v[2]) }, func(any) { m.goTo("consoles") })
 		})
@@ -894,6 +1036,10 @@ func (m *Model) detailKey(k string, msg tea.Msg) tea.Cmd {
 	if k == "esc" {
 		if m.Screen == "extension" {
 			m.goTo("extensions")
+		} else if m.Screen == "text" && m.textBack != "" {
+			back := m.textBack
+			m.textBack = ""
+			m.goTo(back)
 		} else {
 			m.goTo("views")
 		}
@@ -1077,7 +1223,11 @@ func (m *Model) View() string {
 	title := strings.ToUpper(m.Screen)
 	if m.Screen == "consoles" {
 		if v, e := m.App.Store.View(m.ViewID); e == nil {
-			title = v.Name + " · " + v.Layout + " · " + v.Folder
+			layout := map[string]string{"tiled": "Mosaico", "even-horizontal": "Columnas", "even-vertical": "Filas", "main-vertical": "Panel principal a la izquierda", "main-horizontal": "Panel principal arriba"}[v.Layout]
+			if layout == "" {
+				layout = "Personalizado"
+			}
+			title = v.Name + " · " + layout + " · " + v.Folder
 		}
 	}
 	if m.Screen == "files" {
@@ -1090,14 +1240,20 @@ func (m *Model) View() string {
 	switch m.Screen {
 	case "form":
 		title = m.formTitle
-		for i, f := range m.fields {
-			mark := "  "
-			if i == m.field {
-				mark = "› "
-			}
-			body += mark + f.Label + "\n  " + f.Input.View() + "\n"
+		labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+		cardWidth := max(18, min(72, m.Width-6))
+		inputStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1).Width(max(10, cardWidth-14))
+		for _, f := range m.fields {
+			body += labelStyle.Render(explorer.Clean(f.Label)) + "\n" + inputStyle.Render(f.Input.View()) + "\n\n"
 		}
-		help = "Tab fields · Enter submit · Esc cancel · Ctrl+F folder picker · Ctrl+R recent"
+		button := "[ Guardar ]"
+		if strings.HasPrefix(strings.ToLower(m.formTitle), "nueva terminal") {
+			button = "[ Crear terminal ]"
+		} else if strings.HasPrefix(strings.ToLower(m.formTitle), "nueva consola") {
+			button = "[ Crear consola ]"
+		}
+		body += lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Render(button) + "     " + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("[ Cancelar ]")
+		help = "Tab cambiar campo · Enter confirmar · Esc cancelar · Ctrl+F elegir carpeta · Ctrl+R recientes"
 	case "choice":
 		title = m.formTitle
 		help = "↑↓ choose · Enter select · Esc back"
@@ -1119,7 +1275,7 @@ func (m *Model) View() string {
 	case "views":
 		help = "n new view · d delete view · Enter consoles · Tab section · ? SSH help · q quit"
 	case "consoles":
-		help = "t Terminal · n launch · Enter open · f folder · b explorer · l layout · a link · d unlink · r restart · x stop · [ ] move"
+		help = "F6 lista de archivos · t nueva terminal · n otra consola · Enter abrir · f carpeta · l distribución · a vincular · d desvincular · r reiniciar · x detener"
 	case "notes":
 		help = "n new · Enter edit · / search · r rename/restore · d trash · t trash view · e export · Tab section"
 	case "extensions":
@@ -1141,7 +1297,74 @@ func (m *Model) View() string {
 			body = "  Nothing here yet. Use the actions below to get started.\n"
 		}
 	}
-	return header + "\n" + muted.Render(strings.Repeat("─", max(1, m.Width-1))) + "\n" + accent.Render(explorer.Clean(title)) + "\n\n" + lipgloss.NewStyle().MaxWidth(m.Width).Height(max(1, m.Height-9)).MaxHeight(max(1, m.Height-9)).Render(body) + "\n" + muted.Render(explorer.Clean(help)) + "\n" + lipgloss.NewStyle().MaxWidth(m.Width).Render(explorer.Clean(m.Status)) + "\n"
+	header = accent.Render("ShellStudio") + "   " + navTab("Views", m.Screen == "views") + "   " + navTab("Notes", m.Screen == "notes") + "   " + navTab("Extensions", m.Screen == "extensions") + "   " + navTab("Files", m.Screen == "files")
+	contentHeight := max(1, m.Height-9)
+	content := lipgloss.NewStyle().MaxWidth(m.Width).Height(contentHeight).MaxHeight(contentHeight).Render(body)
+	if m.Screen == "consoles" && m.Width >= 70 {
+		content = m.consoleWorkspace(contentHeight, accent, muted, selected)
+	}
+	if m.Screen == "form" || m.Screen == "choice" || m.Screen == "confirm" {
+		cardWidth := max(18, min(72, m.Width-6))
+		card := lipgloss.NewStyle().Width(cardWidth).Padding(1, 2).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("86")).Background(lipgloss.Color("235")).Render(accent.Render(title) + "\n\n" + body)
+		content = lipgloss.Place(m.Width, contentHeight, lipgloss.Center, lipgloss.Center, card)
+	}
+	pageTitle := accent.Render(explorer.Clean(title))
+	if m.Screen == "form" || m.Screen == "choice" || m.Screen == "confirm" {
+		pageTitle = ""
+	}
+	return header + "\n" + muted.Render(strings.Repeat("─", max(1, m.Width-1))) + "\n" + pageTitle + "\n\n" + content + "\n" + muted.Render(explorer.Clean(help)) + "\n" + lipgloss.NewStyle().MaxWidth(m.Width).Render(explorer.Clean(m.Status)) + "\n"
+}
+
+func navTab(label string, active bool) string {
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	if active {
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Underline(true)
+	}
+	return style.Render(label)
+}
+
+func (m *Model) consoleWorkspace(height int, accent, muted, selected lipgloss.Style) string {
+	sidebarWidth := max(22, min(34, m.Width/3))
+	mainWidth := max(20, m.Width-sidebarWidth-1)
+	rowsHeight := max(1, height-2)
+	var tree strings.Builder
+	tree.WriteString(accent.Render("Files") + "\n")
+	tree.WriteString(muted.Render(explorer.Clean(m.treePath)) + "\n")
+	start := max(0, m.treeIndex-rowsHeight+1)
+	for i := start; i < len(m.treeEntries) && i < start+rowsHeight; i++ {
+		entry := m.treeEntries[i]
+		label := entry.Name
+		if entry.Dir {
+			label = "▸ " + label + "/"
+		} else {
+			label = "   " + label
+		}
+		label = lipgloss.NewStyle().MaxWidth(sidebarWidth - 3).Render(explorer.Clean(label))
+		if m.treeFocus && i == m.treeIndex {
+			label = selected.Render(label)
+		}
+		tree.WriteString(label + "\n")
+	}
+	if len(m.treeEntries) == 0 {
+		tree.WriteString(muted.Render("No se pudo leer la carpeta") + "\n")
+	}
+	main := ""
+	if len(m.Rows) == 0 {
+		main = "  No hay consolas en esta vista.\n\n  Pulsa t para crear una terminal.\n"
+	} else {
+		start := m.offset()
+		end := min(len(m.Rows), start+rowsHeight)
+		for i := start; i < end; i++ {
+			line := lipgloss.NewStyle().MaxWidth(mainWidth - 2).Render(explorer.Clean(m.Rows[i].Label))
+			if i == m.Index && !m.treeFocus {
+				line = selected.Render(line)
+			}
+			main += "  " + line + "\n"
+		}
+	}
+	left := lipgloss.NewStyle().Width(sidebarWidth).Height(height).MaxHeight(height).Render(tree.String())
+	right := lipgloss.NewStyle().Width(mainWidth).Height(height).MaxHeight(height).Render(main)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, muted.Render("│"), right)
 }
 func (m *Model) SetViewer(kind, path string) {
 	m.Screen = "viewer"

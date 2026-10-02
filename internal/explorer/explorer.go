@@ -7,10 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
 )
+
+var ansiControl = regexp.MustCompile(`(\x1b|\^\[)(\[[0-?]*[ -/]*[@-~]|\][^\x07]*(\x07|\x1b\\)|[@-_])`)
 
 type Entry struct {
 	Name, Path string
@@ -51,6 +54,7 @@ func List(path, search string) ([]Entry, error) {
 	return out, nil
 }
 func Clean(s string) string {
+	s = ansiControl.ReplaceAllString(s, "")
 	return strings.Map(func(r rune) rune {
 		if (unicode.IsControl(r) && r != '\n' && r != '\t') || r == 0x7f {
 			return -1
