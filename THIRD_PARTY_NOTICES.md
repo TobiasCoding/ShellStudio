@@ -11,6 +11,11 @@ licenses are preserved), and Go's x packages (BSD-style licenses). SQLite itself
 is public domain. See individual notices rather than assuming one license for
 all transitive components.
 
+Bubble Tea v1.3.4 is included under third_party/bubbletea with its MIT license.
+ShellStudio changes its initialization to select the fixed dark theme without
+querying the terminal. The source and patch are described in
+[third_party/bubbletea/SHELLSTUDIO.md](third_party/bubbletea/SHELLSTUDIO.md).
+
 Bundled agent-chat and agent-gantt 2.0.0 are separate MIT-licensed Python packages.
 Their unmodified server and console-entry source and exact MIT licenses live in
 internal/extensions/bundles/agent-chat and agent-gantt. ShellStudio's offline wheel

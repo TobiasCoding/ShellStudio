@@ -1,13 +1,22 @@
 # Architecture
 
-Bubble Tea clients share a SQLite metadata store. Each UI client and logical view
-has a private presentation session on views.sock. Its panes attach as clients to
+The entry point execs tmux directly; no outer TUI probes the terminal before
+attaching. Each logical view has one presentation session on views.sock. Its
+panes attach as clients to
 programs.sock, which owns the persistent processes. Removing presentation panes
-does not end programs. Each client has independent focus and presentation layout.
+does not end programs. Clients showing the same view share focus and layout.
+The explorer and popup dialogs use a small terminal cell renderer; Bubble Tea is
+used for Notes, extension management and read-only viewers only.
 
 The executable embeds its catalog, JSON schema and MIT Python packages. Metadata
-uses versioned transactional migrations, WAL, FULL synchronous writes, foreign
-keys and a busy timeout on every connection. Schema 2 is current; newer schemas
+uses versioned transactional migrations, WAL, foreign keys and a busy timeout
+on every connection. Note writes commit with synchronous=FULL: Saved is shown
+only after the WAL is on disk. View and console metadata commit with
+synchronous=NORMAL: the database remains consistent after a power cut, but
+recent metadata commits may be lost. Note writers serialize changes to the
+connection's synchronization setting. Preferences (last view, last console kind,
+recent folders) are replaced atomically without fsync; tree state is metadata.
+Schema 3 is current; newer schemas
 are rejected. Existing data is never silently reset after an integrity failure.
 
 The program server invokes the private _exec entry point with a console ID. It
@@ -15,8 +24,9 @@ loads saved argv/environment, changes directory and calls execve. Manifest field
 never become shell source. Relays and explorer UIs are presentation processes.
 Stable console IDs reconcile membership. Focus, attach and resize reuse panes.
 Stale IDs can fall back only for navigation; destructive actions reject them.
-Normal UI exit removes its presentation sessions. Abrupt kills can leave orphan
-presentation sessions, but cannot lose durable console metadata.
+F10 detaches the client and preserves its view session. Reopening reconciles
+panes by console ID without restarting running programs. Explorer state is saved
+per view. Migration from schema 2 enables the explorer on existing views.
 
 tmux handles resize and terminal output natively. Commands are batched and have
 a five-second deadline. Subprocess output is limited to 64 KiB, downloads to

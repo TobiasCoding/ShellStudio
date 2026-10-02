@@ -4,8 +4,10 @@
 </div>
 
 Shell Studio is a standalone Linux terminal workspace for local terminals, WSL and SSH.
-Persistent consoles live in a private tmux server. Bubble Tea provides views,
-the file explorer, global Notes, extension management and forms.
+Persistent consoles live in a private tmux server. The workspace opens directly
+into a view, with a file tree on the left, console headers and clickable dialogs,
+following the layout and interaction of sesiones. Notes and extension management
+use dedicated Bubble Tea screens.
 
 License: GPL-3.0-only. Bundled agent-chat and agent-gantt packages retain MIT.
 External programs have their own licenses. No agent installation is required.
@@ -52,7 +54,7 @@ shellstudio                  # Open the current directory
 shellstudio .                # The same, explicitly
 shellstudio /path/to/project # Open another directory
 shellstudio "folder with spaces"
-shellstudio --menu           # Start at the saved views menu
+shellstudio --menu           # Resume the last view (F7 opens saved views)
 ```
 
 ShellStudio reuses a saved view for the folder, or creates one. Existing consoles
@@ -99,28 +101,45 @@ for publishing versions that the installer and updater can discover.
 
 ## Workspace
 
-Press n in Views to create a view with a base folder. Enter opens its console
-list; t opens a dialog to create a Terminal, and n selects an enabled extension.
-A blank launch folder uses the view's folder, then ShellStudio's launch directory.
-Ctrl+F opens the folder picker; Ctrl+R shows recent folders. Existing consoles
-keep their folders.
+The file tree occupies the left side at full height. Its clickable shortcuts open
+the same dialogs as the keyboard:
 
-The menu navigation at the top is clickable. In the console list, the left Files
-panel shows the view folder; click a folder or focus it with F6, then use the
-arrow keys and Enter to browse or preview files. F6 changes tmux panels after
-Enter opens a tmux view; F4 zooms, F10 returns to the menu.
-Mouse clicks focus panels; drag borders to resize. Clients have independent focus.
+| Key | Action |
+| --- | --- |
+| F2 | View menu: consoles, layouts, views, explorer and ports |
+| F3 | Create a console; choose its kind and editable name |
+| F5 | Arrange all consoles, or create a view from a marked subset |
+| F7 | Browse, create or delete saved views |
+| F9 | Confirm ending the selected console |
+| F10 | Leave; programs keep running |
+| F4 | Zoom or restore the selected panel |
+| F6 / Shift+F6 | Next / previous panel |
+| Ctrl+Alt+arrows | Focus a panel in that direction |
+| Ctrl+Shift+Left/Right or F8 / Shift+F8 | Change view |
+| Alt+1–5 | Columns, rows, grid, active on the left, active on top |
+| Alt+[ / Alt+] | Move the console before / after its neighbor |
+
+Click or right-click a console header to rename, zoom, move, replace, close its
+panel or end its program. Drag a header onto another console to exchange their
+positions. Drag borders to resize; geometry changes on release. Drag a file from
+the tree onto a console to type its path. The tree supports search (/), previews,
+editing with nano (E), renaming (N) and reload (R). Its expanded folders and
+selection are saved per view. F2 can restore a hidden explorer.
+
+Dialogs accept keyboard navigation and mouse clicks; Escape cancels. Closing a
+panel preserves its program; killing a console requires confirmation. Finished
+and disconnected consoles show options to restart, reconnect or close the panel.
 Closing the UI or SSH connection preserves programs. After a machine restart,
-saved consoles are stopped; r explicitly relaunches one.
+programs are stopped and must be explicitly restarted.
 
-In the console list: f edits the view; b toggles the tmux explorer; l selects layout;
-a links an existing console; d unlinks it; [ / ] moves it; x stops its program.
-The explorer supports filtering, preview, e for an external editor, r to rename,
-and c to copy a path using OSC 52.
+There is one presentation session per view. Two clients looking at the same view
+share focus, layout and pane size. Different views have separate focus; a console
+can appear in several views without starting its program again.
 
 ## Notes
 
-Tab to Notes; n creates a note. Search with /, trash with d, toggle trash with t,
+Choose Notes in F3 or run `shellstudio notes`; n creates a note.
+Search with /, trash with d, toggle trash with t,
 rename/restore with r, and export Markdown with e. The library is global.
 
 Saving starts after 300 ms idle or at least once per second while typing.
@@ -131,6 +150,7 @@ Concurrent revisions create a conflict copy. Abrupt kills may lose pending edits
 
 ## Extensions
 
+Run `shellstudio extensions manage` to open the extension manager.
 Terminal is the only built-in program launcher. Notes is bundled and enabled.
 Claude, Codex, agent-chat and agent-gantt are optional. Their catalog is always
 available, even if the programs are absent.
@@ -158,7 +178,8 @@ Python venvs and include read-only viewers. No private sessions or data migrate.
     make check
     make release
 
-Press ? for SSH, scp, forwarding, clipboard and WSL help. OSC 52 needs support
+F2 → Forward ports opens the SSH forwarding dialog. Dropping a Windows path in
+the explorer opens an SCP upload dialog. OSC 52 clipboard copying needs support
 and permission in the local terminal. Ctrl+B then [ enters tmux copy mode.
 
 See [architecture](docs/architecture.md), [extensions](docs/extensions.md),

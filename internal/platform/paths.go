@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 type Paths struct{ Config, Data, State, Runtime string }
@@ -112,6 +113,31 @@ func AtomicWrite(path string, data []byte) (err error) {
 	defer d.Close()
 	return d.Sync()
 }
+
+// ReplaceFile swaps the file atomically without fsync: for preferences, where a
+// lost write after a power cut costs nothing and a sync costs seconds on slow disks.
+func ReplaceFile(path string, data []byte) error {
+	if fi, e := os.Lstat(path); e == nil && (!fi.Mode().IsRegular() || fi.Mode()&os.ModeSymlink != 0) {
+		return fmt.Errorf("refusing non-regular destination: %s", path)
+	} else if e != nil && !os.IsNotExist(e) {
+		return e
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".pending-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if err = f.Chmod(0600); err == nil {
+		_, err = f.Write(data)
+	}
+	if e := f.Close(); err == nil {
+		err = e
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
 func WriteJSON(path string, v any) error {
 	b, e := json.MarshalIndent(v, "", "  ")
 	if e != nil {
@@ -171,6 +197,27 @@ func Lock(path string) (*os.File, error) {
 		return nil, fmt.Errorf("another operation is active; retry: %w", e)
 	}
 	return f, nil
+}
+
+// LockWait retries until the deadline: view rendering and console starts queue
+// behind each other instead of failing when two shortcuts arrive together.
+func LockWait(path string, wait time.Duration) (*os.File, error) {
+	f, e := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	if e != nil {
+		return nil, e
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if e == nil {
+			return f, nil
+		}
+		if time.Now().After(deadline) {
+			f.Close()
+			return nil, fmt.Errorf("another operation is active; retry: %w", e)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 func Unlock(f *os.File) {
 	if f != nil {

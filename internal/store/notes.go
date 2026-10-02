@@ -40,13 +40,23 @@ func (s *Store) Note(id string) (Note, error) {
 }
 func (s *Store) NewNote(title string) (Note, error) {
 	n := Note{ID: ID(), Title: title, Revision: 1, Updated: time.Now().UTC().Format(time.RFC3339Nano)}
-	_, e := s.DB.Exec("INSERT INTO notes(id,title,body,updated) VALUES(?,?,'',?)", n.ID, n.Title, n.Updated)
+	e := s.Durable(func() error {
+		_, e := s.DB.Exec("INSERT INTO notes(id,title,body,updated) VALUES(?,?,'',?)", n.ID, n.Title, n.Updated)
+		return e
+	})
 	return n, e
 }
 
 // SaveNote is compare-and-swap. A stale editor creates a sibling; neither edit is lost.
 // The returned revision is valid only after Commit succeeds.
 func (s *Store) SaveNote(n Note) (saved Note, conflict bool, err error) {
+	err = s.Durable(func() error {
+		saved, conflict, err = s.saveNote(n)
+		return err
+	})
+	return saved, conflict, err
+}
+func (s *Store) saveNote(n Note) (saved Note, conflict bool, err error) {
 	if len(n.Body) > 4<<20 {
 		return n, false, errors.New("note exceeds 4 MiB")
 	}
@@ -88,6 +98,8 @@ func (s *Store) SaveNote(n Note) (saved Note, conflict bool, err error) {
 	return n, conflict, nil
 }
 func (s *Store) Trash(id string, trash bool) error {
-	_, e := s.DB.Exec("UPDATE notes SET trashed=?,revision=revision+1,updated=? WHERE id=?", trash, time.Now().UTC().Format(time.RFC3339Nano), id)
-	return e
+	return s.Durable(func() error {
+		_, e := s.DB.Exec("UPDATE notes SET trashed=?,revision=revision+1,updated=? WHERE id=?", trash, time.Now().UTC().Format(time.RFC3339Nano), id)
+		return e
+	})
 }

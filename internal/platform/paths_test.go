@@ -40,6 +40,15 @@ func TestAtomicWriteAndLock(t *testing.T) {
 	if e := AtomicWrite(p+".link", []byte("bad")); e == nil {
 		t.Fatal("symlink accepted")
 	}
+	if e := ReplaceFile(p+".link", []byte("bad")); e == nil {
+		t.Fatal("preference writer accepted symlink")
+	}
+	if e := ReplaceFile(p, []byte("preference")); e != nil {
+		t.Fatal(e)
+	}
+	if b, e := os.ReadFile(p); e != nil || string(b) != "preference" {
+		t.Fatalf("preference replacement: %q, %v", b, e)
+	}
 	l, e := Lock(p + ".lock")
 	if e != nil {
 		t.Fatal(e)

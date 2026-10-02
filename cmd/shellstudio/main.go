@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -15,11 +16,13 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"shellstudio/internal/app"
 	"shellstudio/internal/extensions"
 	"shellstudio/internal/platform"
 	"shellstudio/internal/runner"
 	"shellstudio/internal/store"
+	"shellstudio/internal/tui"
 	"shellstudio/internal/ui"
 )
 
@@ -40,6 +43,23 @@ func printJSON(v any) error {
 	fmt.Println(string(b))
 	return nil
 }
+
+// flags parses the --name value options of the internal commands.
+func flags(name string, args []string, names ...string) (map[string]*string, map[string]*bool, []string, error) {
+	f := flag.NewFlagSet(name, flag.ContinueOnError)
+	f.SetOutput(io.Discard)
+	values, switches := map[string]*string{}, map[string]*bool{}
+	for _, n := range names {
+		if strings.HasPrefix(n, "!") {
+			switches[n[1:]] = f.Bool(n[1:], false, "")
+		} else {
+			values[n] = f.String(n, "", "")
+		}
+	}
+	e := f.Parse(args)
+	return values, switches, f.Args(), e
+}
+
 func run(args []string) error {
 	workspace, menu := false, false
 	folder := ""
@@ -100,11 +120,6 @@ func run(args []string) error {
 			}
 			fmt.Printf("Valid: %s %s (schema %d)\n", m.ID, m.Version, m.Schema)
 			return nil
-		case "_empty":
-			fmt.Println("ShellStudio\r\nNo consoles in this view. Press F10 to return to the menu.")
-			for {
-				time.Sleep(time.Hour)
-			}
 		}
 	}
 	if workspace || menu || (len(args) > 0 && args[0] == "notes") {
@@ -117,168 +132,107 @@ func run(args []string) error {
 		return e
 	}
 	defer a.Close()
-	if len(args) > 0 {
-		switch args[0] {
-		case "doctor":
-			return doctor(a)
-		case "backup":
-			if len(args) != 2 {
-				return errors.New("usage: shellstudio backup /absolute/path.db")
-			}
-			p, e := filepath.Abs(args[1])
-			if e != nil {
-				return e
-			}
-			if e = a.Store.Backup(p); e != nil {
-				return e
-			}
-			s, e := store.Open(p)
-			if e != nil {
-				return e
-			}
-			defer s.Close()
-			if e = s.Check(); e != nil {
-				return e
-			}
-			fmt.Println("Verified backup:", p)
-			return nil
-		case "views":
-			vs, e := a.Store.Views()
-			if e != nil {
-				return e
-			}
-			return printJSON(vs)
-		case "consoles":
-			cs, e := a.Store.Consoles("")
-			if e != nil {
-				return e
-			}
-			return printJSON(cs)
-		case "_render":
-			if len(args) != 3 {
-				return errors.New("render needs a client ID and view ID")
-			}
-			v, e := a.Store.View(args[2])
-			if e != nil {
-				return e
-			}
-			cs, e := a.Store.Consoles(v.ID)
-			if e != nil {
-				return e
-			}
-			name, e := a.Mux.Sync(args[1], v, cs, 100, 30)
-			if e != nil {
-				return e
-			}
-			fmt.Println(name)
-			return nil
-		case "new-view":
-			f := flag.NewFlagSet("new-view", flag.ContinueOnError)
-			folder := f.String("folder", "", "base folder")
-			if e = f.Parse(args[1:]); e != nil {
-				return e
-			}
-			if f.NArg() != 1 {
-				return errors.New("usage: shellstudio new-view [--folder PATH] NAME")
-			}
-			p, e := platform.Directory(*folder, "", a.CWD)
-			if e != nil {
-				return e
-			}
-			v, e := a.Store.NewView(f.Arg(0), p)
-			if e != nil {
-				return e
-			}
-			return printJSON(v)
-		case "launch":
-			f := flag.NewFlagSet("launch", flag.ContinueOnError)
-			view := f.String("view", "", "view ID")
-			ext := f.String("extension", "terminal", "extension ID")
-			profile := f.String("profile", "", "profile")
-			folder := f.String("folder", "", "explicit folder")
-			name := f.String("name", "", "console name")
-			if e = f.Parse(args[1:]); e != nil {
-				return e
-			}
-			if *view == "" {
-				return errors.New("launch requires --view ID")
-			}
-			c, e := a.Launch(*view, *name, *ext, *profile, *folder)
-			if e != nil {
-				return e
-			}
-			return printJSON(c)
-		case "restart", "stop":
-			if len(args) != 2 {
-				return errors.New("usage: shellstudio " + args[0] + " CONSOLE_ID")
-			}
-			if args[0] == "restart" {
-				return a.Restart(args[1])
-			}
-			return a.Stop(args[1])
-		case "_exec":
-			if len(args) != 2 {
-				return errors.New("invalid console invocation")
-			}
-			c, e := a.Store.Console(args[1])
-			if e != nil {
-				return e
-			}
-			if len(c.Argv) == 0 {
-				return errors.New("missing console executable")
-			}
-			p, e := exec.LookPath(c.Argv[0])
-			if e != nil {
-				return e
-			}
-			if e = os.Chdir(c.Folder); e != nil {
-				return e
-			}
-			a.Close()
-			return syscall.Exec(p, c.Argv, runner.Env(c.Env))
-		case "_relay":
-			if len(args) != 2 {
-				return errors.New("invalid relay")
-			}
-			states, e := a.Mux.Programs()
-			if e != nil {
-				return e
-			}
-			if !states[args[1]] {
-				fmt.Println("Stopped console. Press F10 and use r to restart explicitly.")
-				return nil
-			}
-			tm, e := exec.LookPath("tmux")
-			if e != nil {
-				return e
-			}
-			sock := a.Mux.Socket(false)
-			a.Close()
-			return syscall.Exec(tm, []string{"tmux", "-S", sock, "attach-session", "-t", "=c-" + args[1]}, runner.Env(nil))
-		case "extensions":
-			if len(args) == 1 {
-				return printJSON(extensions.Catalog(a.Paths.Config))
-			}
-			return errors.New("use the Extensions TUI screen to review installation actions")
-		case "notes", "viewer", "_explorer":
-		default:
-			return fmt.Errorf("unknown command %q; use --help", args[0])
+	if workspace || menu {
+		var v store.View
+		if menu {
+			v, e = a.LastView()
+		} else {
+			v, e = a.Workspace(folder)
 		}
-	}
-	screen := "views"
-	if len(args) > 0 && args[0] == "notes" {
-		screen = "notes"
-	}
-	model := ui.New(a, screen)
-	if workspace {
-		v, e := a.Workspace(folder)
 		if e != nil {
 			return e
 		}
-		model.OpenWorkspace(v)
+		return a.Open(v.ID, "")
 	}
-	defer a.Mux.Cleanup(model.Client)
-	if len(args) > 0 && args[0] == "viewer" {
+	switch args[0] {
+	case "doctor":
+		return doctor(a)
+	case "backup":
+		if len(args) != 2 {
+			return errors.New("usage: shellstudio backup /absolute/path.db")
+		}
+		p, e := filepath.Abs(args[1])
+		if e != nil {
+			return e
+		}
+		if e = a.Store.Backup(p); e != nil {
+			return e
+		}
+		s, e := store.Open(p)
+		if e != nil {
+			return e
+		}
+		defer s.Close()
+		if e = s.Check(); e != nil {
+			return e
+		}
+		fmt.Println("Verified backup:", p)
+		return nil
+	case "views":
+		vs, e := a.Store.Views()
+		if e != nil {
+			return e
+		}
+		return printJSON(vs)
+	case "consoles":
+		cs, e := a.Store.Consoles("")
+		if e != nil {
+			return e
+		}
+		return printJSON(cs)
+	case "new-view":
+		v, _, rest, e := flags("new-view", args[1:], "folder")
+		if e != nil {
+			return e
+		}
+		if len(rest) != 1 {
+			return errors.New("usage: shellstudio new-view [--folder PATH] NAME")
+		}
+		nv, e := a.NewView(rest[0], *v["folder"], nil, "")
+		if e != nil {
+			return e
+		}
+		return printJSON(nv)
+	case "launch":
+		v, _, _, e := flags("launch", args[1:], "view", "extension", "profile", "folder", "name")
+		if e != nil {
+			return e
+		}
+		if *v["view"] == "" {
+			return errors.New("launch requires --view ID")
+		}
+		kind := *v["extension"]
+		if kind == "" {
+			kind = "terminal"
+		}
+		c, e := a.Launch(*v["view"], *v["name"], kind, *v["profile"], *v["folder"], nil)
+		if e != nil {
+			return e
+		}
+		a.RefreshOpen(*v["view"])
+		return printJSON(c)
+	case "restart", "stop", "kill":
+		if len(args) != 2 {
+			return errors.New("usage: shellstudio " + args[0] + " CONSOLE_ID")
+		}
+		switch args[0] {
+		case "restart":
+			return a.Restart(args[1])
+		case "kill":
+			return a.Kill(args[1])
+		}
+		return a.Stop(args[1])
+	case "extensions":
+		if len(args) == 1 {
+			return printJSON(extensions.Catalog(a.Paths.Config))
+		}
+		if len(args) == 2 && args[1] == "manage" {
+			return bubbleTea(a, ui.New(a, "extensions"))
+		}
+		return errors.New("usage: shellstudio extensions [manage]")
+	case "notes":
+		return bubbleTea(a, ui.New(a, "notes"))
+	case "viewer":
 		if len(args) < 2 || len(args) > 3 {
 			return errors.New("usage: shellstudio viewer agent-chat|agent-gantt [DATABASE]")
 		}
@@ -292,17 +246,224 @@ func run(args []string) error {
 		}
 		p := filepath.Join(a.Paths.Data, "extension-data", kind, file)
 		if len(args) == 3 {
-			p, e = filepath.Abs(args[2])
-			if e != nil {
+			if p, e = filepath.Abs(args[2]); e != nil {
 				return e
 			}
 		}
-		model.SetViewer(kind, p)
+		m := ui.New(a, "viewer")
+		m.SetViewer(kind, p)
+		return bubbleTea(a, m)
+	case "_exec":
+		if len(args) != 2 {
+			return errors.New("invalid console invocation")
+		}
+		c, e := a.Store.Console(args[1])
+		if e != nil {
+			return e
+		}
+		if len(c.Argv) == 0 {
+			return errors.New("missing console executable")
+		}
+		p, e := exec.LookPath(c.Argv[0])
+		if e != nil {
+			return e
+		}
+		if e = os.Chdir(c.Folder); e != nil {
+			return e
+		}
+		a.Close()
+		env := map[string]string{"SHELLSTUDIO_CONSOLE": c.ID}
+		for k, v := range c.Env {
+			env[k] = v
+		}
+		return syscall.Exec(p, c.Argv, runner.Env(env))
 	}
-	if len(args) == 2 && args[0] == "_explorer" {
-		model.SetExplorer(args[1])
+	// Internal commands run from tmux bindings, popups and view panes.
+	return internal(a, args)
+}
+
+func internal(a *app.App, args []string) error {
+	report := func(context string, e error) error {
+		if e != nil {
+			a.RecordError(e, context)
+			// From run-shell -b errors go to the status line, not to a pane.
+			a.Mux.Run(true, "display-message", "-d", "4000", e.Error())
+		}
+		return nil
 	}
-	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithFilter(discardTerminalProbe))
+	switch args[0] {
+	case "_empty":
+		return tui.Empty()
+	case "_disconnected":
+		return tui.Disconnected(a)
+	case "_explorer":
+		if len(args) != 2 {
+			return errors.New("usage: _explorer VIEW")
+		}
+		return tui.Explorer(a, args[1])
+	case "_close":
+		// Leaving nano closes its console. It runs inside the console that ends.
+		if len(args) != 2 {
+			return errors.New("usage: _close CONSOLE")
+		}
+		return report("Close editor", a.Kill(args[1]))
+	case "_sync":
+		if len(args) != 2 {
+			return errors.New("usage: _sync VIEW")
+		}
+		return report("Reconnect", a.Sync(args[1]))
+	case "_view":
+		if len(args) < 2 {
+			return errors.New("usage: _view ACTION")
+		}
+		v, sw, _, e := flags("_view", args[2:], "client", "pane", "layout", "origin", "target", "!back")
+		if e != nil {
+			return e
+		}
+		client, pane := *v["client"], *v["pane"]
+		switch args[1] {
+		case "next", "previous":
+			delta := 1
+			if args[1] == "previous" {
+				delta = -1
+			}
+			return report("Change view", a.SwitchView(client, delta))
+		case "layout":
+			f, e := a.Focus(client, pane, false)
+			if e != nil {
+				return report("Layout", e)
+			}
+			return report("Layout", a.ApplyLayout(f.View, *v["layout"], f.Console))
+		case "drop":
+			return report("Drop path", a.Drop(*v["origin"], *v["target"]))
+		case "move-before", "move-after":
+			f, e := a.Focus(client, pane, false)
+			if e != nil || f.Console == "" {
+				return report("Move console", e)
+			}
+			delta := 1
+			if args[1] == "move-before" {
+				delta = -1
+			}
+			return report("Move console", a.Move(f.View, f.Console, delta))
+		}
+		return report("Dialog", tui.RunView(a, args[1], client, pane, *sw["back"]))
+	case "_dialog":
+		if len(args) < 2 {
+			return errors.New("usage: _dialog ports|upload")
+		}
+		v, _, _, e := flags("_dialog", args[2:], "client", "pane", "source", "view", "target")
+		if e != nil {
+			return e
+		}
+		if args[1] == "upload" {
+			return report("Upload from the PC", tui.Upload(a, *v["source"], *v["view"], *v["target"], *v["client"]))
+		}
+		return report("Forward ports", a.OpenDialog("ports", *v["client"], *v["pane"]))
+	case "_action":
+		if len(args) < 2 {
+			return errors.New("usage: _action ACTION")
+		}
+		v, _, _, e := flags("_action", args[2:], "pane", "client", "session", "tty", "target")
+		if e != nil {
+			return e
+		}
+		return report("Panel action", paneAction(a, args[1], *v["pane"], *v["client"], *v["session"], *v["tty"], *v["target"]))
+	case "_resize":
+		if len(args) < 2 {
+			return nil
+		}
+		v, _, _, e := flags("_resize", args[2:], "client", "id", "pane", "x", "y", "left", "top")
+		if e != nil {
+			return nil
+		}
+		a.Resize(args[1], *v["client"], *v["id"], *v["pane"], *v["x"], *v["y"], *v["left"], *v["top"])
+		return nil
+	case "_resize_window":
+		v, sw, _, e := flags("_resize_window", args[1:], "client", "worker", "!immediate")
+		if e != nil {
+			return nil
+		}
+		a.ResizeWindow(*v["client"], *v["worker"], *sw["immediate"])
+		return nil
+	}
+	return fmt.Errorf("unknown command %q; use --help", args[0])
+}
+
+// paneAction is what the header menus and finished consoles choose. It runs
+// from run-shell -b: errors go to the status line.
+func paneAction(a *app.App, action, pane, client, session, tty, target string) error {
+	var e error
+	if tty != "" {
+		if pane, e = a.PaneByTTY(tty); e != nil {
+			return e
+		}
+	}
+	var f app.Focus
+	switch {
+	case client != "":
+		if f, e = a.Focus(client, "", false); e != nil {
+			return e
+		}
+		pane = f.Pane
+	case pane != "":
+		if f, e = a.PaneOwner(pane); e != nil {
+			return e
+		}
+	default:
+		f.Console = strings.TrimPrefix(session, "c-")
+	}
+	switch {
+	case action == "move":
+		l, e := platform.LockWait(filepath.Join(a.Paths.Runtime, "render.lock"), 10*time.Second)
+		if e != nil {
+			return e
+		}
+		defer platform.Unlock(l)
+		other, e := a.PaneOwner(target)
+		if e != nil {
+			return e
+		}
+		if other.View != f.View {
+			return errors.New("the consoles are in different views")
+		}
+		if f.Console != "" && other.Console != "" {
+			if e = a.Store.Swap(f.View, f.Console, other.Console); e != nil {
+				return e
+			}
+			_, e = a.Mux.Run(true, "swap-pane", "-d", "-s", pane, "-t", target)
+			return e
+		}
+	case action == "rename":
+		// The new name travels in a tmux option, never through a shell.
+		var name string
+		if pane != "" {
+			o, _ := a.Mux.Run(true, "show-options", "-pqv", "-t", pane, "@ss_rename")
+			a.Mux.Run(true, "set-option", "-p", "-qu", "-t", pane, "@ss_rename")
+			name = strings.TrimSpace(o)
+		} else {
+			o, _ := a.Mux.Run(false, "show-options", "-qv", "-t", "="+session+":", "@ss_rename")
+			a.Mux.Run(false, "set-option", "-qu", "-t", "="+session+":", "@ss_rename")
+			name = strings.TrimSpace(o)
+		}
+		if name != "" && f.Console != "" {
+			return a.Rename(f.Console, name)
+		}
+	case (action == "explorer" || action == "remove") && f.Kind == "explorer":
+		return a.ToggleExplorer(f.View)
+	case action == "remove" && f.Console != "" && f.View != "":
+		return a.RemoveFromView(f.View, f.Console)
+	case action == "kill" && f.Console != "":
+		return a.Kill(f.Console)
+	}
+	return nil
+}
+
+// bubbleTea runs the Notes, Extensions and viewer screens. The background is
+// declared dark so lipgloss never queries the terminal for its colours.
+func bubbleTea(a *app.App, model *ui.Model) error {
+	lipgloss.SetHasDarkBackground(true)
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGHUP, syscall.SIGTERM)
 	defer signal.Stop(sig)
@@ -315,23 +476,8 @@ func run(args []string) error {
 		case <-done:
 		}
 	}()
-	_, e = p.Run()
+	_, e := p.Run()
 	return e
-}
-
-// Terminal device-attribute replies are not user keystrokes. Some remote
-// terminals deliver them as runes after ShellStudio or an embedded program
-// has probed capabilities; discard them so they cannot leak into forms.
-func discardTerminalProbe(_ tea.Model, msg tea.Msg) tea.Msg {
-	key, ok := msg.(tea.KeyMsg)
-	if !ok {
-		return msg
-	}
-	s := key.String()
-	if (strings.HasPrefix(s, "?61;") || strings.HasPrefix(s, ">0;")) && strings.HasSuffix(s, "c") {
-		return nil
-	}
-	return msg
 }
 
 func doctor(a *app.App) error {
@@ -382,28 +528,36 @@ func doctor(a *app.App) error {
 	return nil
 }
 
-const help = `ShellStudio — persistent consoles, views, extensions and global notes
+const help = `ShellStudio — persistent consoles in views, with a file explorer
 
 Usage:
-  shellstudio [DIRECTORY]              Open the current or selected folder
+  shellstudio [DIRECTORY]              Open the view of the current or selected folder
   shellstudio open DIRECTORY           Open a folder named like a CLI command
-  shellstudio --menu                   Open the saved views menu
+  shellstudio --menu                   Resume the last view
   shellstudio update [--check]         Check releases; ask before installing
-  shellstudio notes                   Open global Notes
-  shellstudio viewer KIND [DATABASE]  Read-only agent-chat / agent-gantt viewer
-  shellstudio doctor                  Check storage, dependencies and extensions
-  shellstudio validate MANIFEST       Validate a file or HTTPS manifest
-  shellstudio schema                  Print the public JSON schema
-  shellstudio backup DESTINATION      Create and verify a SQLite backup
+  shellstudio notes                    Global Notes (also F3 → Notes inside a view)
+  shellstudio extensions [manage]      List extensions, or install/enable/configure them
+  shellstudio viewer KIND [DATABASE]   Read-only agent-chat / agent-gantt viewer
+  shellstudio doctor                   Check storage, dependencies and extensions
+  shellstudio validate MANIFEST        Validate a file or HTTPS manifest
+  shellstudio schema                   Print the public JSON schema
+  shellstudio backup DESTINATION       Create and verify a SQLite backup
   shellstudio new-view [--folder PATH] NAME
-  shellstudio views | consoles | extensions
-  shellstudio launch --view ID [--extension ID] [--profile NAME] [--folder PATH]
+  shellstudio views | consoles
+  shellstudio launch --view ID [--extension ID] [--profile NAME] [--folder PATH] [--name NAME]
   shellstudio restart CONSOLE_ID       Explicitly restart a stopped program
-  shellstudio stop CONSOLE_ID          End a program in all views
+  shellstudio stop CONSOLE_ID          End a program, keeping the console
+  shellstudio kill CONSOLE_ID          End a program and remove the console
   shellstudio version
 
-TUI: Tab changes section; ? shows SSH help; F10 leaves a tmux view.
-Closing the UI preserves programs. Restarting the computer stops them.
+Inside a view:
+  F2 view menu · F3 new console · F5 arrange · F7 views · F9 kill console
+  F10 leave (programs keep running) · F4 zoom · F6 / Ctrl+Alt+arrows change panel
+  Ctrl+Shift+←/→ or F8 change view · Alt+1–5 layouts · Alt+[ / ] move console
+  Click a console header for its menu; drag it onto another console to swap them.
+  Drag a file from the explorer onto a console to type its path.
+
+Closing the terminal or SSH preserves programs. Restarting the computer stops them.
 Storage follows XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME and XDG_RUNTIME_DIR.
 Set SHELLSTUDIO_NO_UPDATE_CHECK=1 to skip the startup release check.
 ShellStudio is GPL-3.0-only; bundled MCP servers retain their MIT licenses.

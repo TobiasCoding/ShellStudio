@@ -2,38 +2,75 @@
 package mux
 
 import (
-	"fmt"
+	"strings"
 	"testing"
 )
 
-func focusMux() *Mux {
-	return &Mux{Run: func(_ bool, args ...string) (string, error) {
-		switch args[0] {
-		case "list-clients":
-			return "/dev/pts/9\tview-one\n/dev/pts/10\tview-two\n", nil
-		case "list-panes":
-			if args[2] == "=view-one:" {
-				return "%31\tconsole-a\t0\t1\n%51\tconsole-b\t0\t0\n", nil
-			}
-			return "%99\tother\t0\t1\n", nil
+func TestQuoteMatchesPOSIXShell(t *testing.T) {
+	for in, want := range map[string]string{
+		"":               "''",
+		"plain/path-1.x": "plain/path-1.x",
+		"with space":     "'with space'",
+		"it's":           `'it'"'"'s'`,
+		"#{client_name}": "'#{client_name}'",
+	} {
+		if got := Quote(in); got != want {
+			t.Errorf("Quote(%q) = %q, want %q", in, got, want)
 		}
-		return "", fmt.Errorf("unexpected command %v", args)
-	}}
+	}
+	if got := Script([]string{"a", "b c"}, []string{"d"}); got != "a 'b c' ; d" {
+		t.Fatal(got)
+	}
 }
-func TestClientFocusReplacement(t *testing.T) {
-	m := focusMux()
-	s, p, e := m.Focus("/dev/pts/9", "%7", true)
-	if e != nil || s != "view-one" || p.ID != "%31" {
-		t.Fatal(s, p, e)
+
+func TestBatchSplitsLongCommandLists(t *testing.T) {
+	var calls [][]string
+	m := &Mux{Run: func(_ bool, args ...string) (string, error) {
+		calls = append(calls, args)
+		return "x\n", nil
+	}}
+	var cmds [][]string
+	for i := 0; i < 200; i++ {
+		cmds = append(cmds, []string{"set-option", "-g", "@opt", strings.Repeat("v", 100)})
 	}
-	if _, _, e = m.Focus("/dev/pts/9", "%7", false); e == nil {
-		t.Fatal("destructive stale pane accepted")
+	out, e := m.Batch(true, cmds...)
+	if e != nil || len(calls) < 2 {
+		t.Fatal(len(calls), e)
 	}
-	if _, _, e = m.Focus("/dev/pts/11", "%31", true); e == nil {
-		t.Fatal("disconnected client used another focus")
+	total := 0
+	for _, c := range calls {
+		size := 0
+		for _, a := range c {
+			size += len(a) + 1
+		}
+		if size > batchBytes+200 {
+			t.Fatal("chunk too large:", size)
+		}
+		for _, a := range c {
+			if a == "set-option" {
+				total++
+			}
+		}
 	}
-	_, p, e = m.Focus("/dev/pts/10", "", false)
-	if e != nil || p.ID != "%99" {
-		t.Fatal(p, e)
+	if total != 200 || strings.Count(out, "x") != len(calls) {
+		t.Fatal(total, out)
+	}
+}
+
+func TestViewControlsBindTheSesionesShortcuts(t *testing.T) {
+	m := &Mux{Binary: "/bin/shellstudio", Tmux: "tmux", Version: "v"}
+	m.Paths.Runtime = "/run/x"
+	keys := map[string]bool{}
+	for _, c := range m.ViewsControls(Sizes{MenuW: 90, MenuH: 14, MenuStacked: 30, NewW: 40, NewH: 12, ArrangeW: 50, ArrangeRows: 19, BrowseW: 50, BrowseRows: 13}) {
+		if len(c) > 2 && c[0] == "bind-key" && c[1] == "-n" {
+			keys[c[2]] = true
+		}
+	}
+	for _, k := range []string{"F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "C-S-DC", "C-S-Left", "C-S-Right",
+		"C-M-Left", "M-1", "M-5", "M-[", "M-]", "MouseDown1Pane", "MouseUp1Pane", "MouseDown3Pane", "MouseDrag1Pane",
+		"MouseDragEnd1Pane", "DoubleClick1Pane", "MouseDown1Border", "C-BSpace"} {
+		if !keys[k] {
+			t.Error("missing binding", k)
+		}
 	}
 }

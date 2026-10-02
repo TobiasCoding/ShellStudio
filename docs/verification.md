@@ -1,5 +1,11 @@
 # Verification record
 
+The current workspace restoration is documented in
+[ui-restoration-20261002.md](ui-restoration-20261002.md), including keyboard and
+mouse workflows, shared view focus and startup-byte checks. The measurements
+below are the historical pre-restoration verification, not new performance
+measurements of the restored interface.
+
 Local verification on Linux amd64, 2026-10-01. No live agent configurations,
 conversations or operational databases were used. The runtime tests use synthetic
 data, private XDG directories and isolated tmux sockets under the ignored .work

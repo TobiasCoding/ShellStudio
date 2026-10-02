@@ -11,13 +11,17 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
 	"shellstudio/internal/platform"
 )
 
-type Store struct{ DB *sql.DB }
+type Store struct {
+	DB        *sql.DB
+	durableMu sync.Mutex
+}
 
 func ID() string {
 	var b [12]byte
@@ -44,7 +48,7 @@ func Open(path string) (*Store, error) {
 	}
 	u := url.URL{Scheme: "file", Path: path}
 	q := u.Query()
-	for _, p := range []string{"journal_mode(WAL)", "synchronous(FULL)", "foreign_keys(ON)", "busy_timeout(3000)", "temp_store(MEMORY)"} {
+	for _, p := range []string{"busy_timeout(10000)", "journal_mode(WAL)", "synchronous(NORMAL)", "foreign_keys(ON)", "temp_store(MEMORY)"} {
 		q.Add("_pragma", p)
 	}
 	u.RawQuery = q.Encode()
@@ -53,7 +57,7 @@ func Open(path string) (*Store, error) {
 		return nil, e
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db}
+	s := &Store{DB: db}
 	if e = s.migrate(); e != nil {
 		db.Close()
 		return nil, e
@@ -65,6 +69,23 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 func (s *Store) Close() error { return s.DB.Close() }
+
+// Durable runs a write whose success the user is told about (a note shown as
+// Saved) with synchronous=FULL: it returns only after the WAL is on disk. View
+// and console metadata use NORMAL: after a power cut the database is
+// consistent but recent commits can be lost, while each commit stays fast
+// on slow disks where a sync takes seconds.
+func (s *Store) Durable(write func() error) error {
+	// Concurrent note writers must not reset synchronous while another
+	// writer is still committing its Saved revision on this connection.
+	s.durableMu.Lock()
+	defer s.durableMu.Unlock()
+	if _, e := s.DB.Exec("PRAGMA synchronous=FULL"); e != nil {
+		return e
+	}
+	defer s.DB.Exec("PRAGMA synchronous=NORMAL")
+	return write()
+}
 func (s *Store) migrate() error {
 	tx, e := s.DB.Begin()
 	if e != nil {
@@ -75,8 +96,8 @@ func (s *Store) migrate() error {
 	if e = tx.QueryRow("PRAGMA user_version").Scan(&v); e != nil {
 		return e
 	}
-	if v > 2 {
-		return fmt.Errorf("database schema %d is newer than supported schema 2", v)
+	if v > 3 {
+		return fmt.Errorf("database schema %d is newer than supported schema 3", v)
 	}
 	if v == 0 {
 		_, e = tx.Exec(`
@@ -92,6 +113,17 @@ PRAGMA user_version=1;`)
 	}
 	if v < 2 {
 		if _, e = tx.Exec("ALTER TABLE views ADD COLUMN explorer INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=2;"); e != nil {
+			return e
+		}
+	}
+	// Schema 3: the file explorer is shown by default, keeps its tree state per
+	// view, and layouts are named (a raw tmux layout no longer fits once the
+	// explorer pane is joined on the left).
+	if v < 3 {
+		if _, e = tx.Exec(`ALTER TABLE views ADD COLUMN tree TEXT NOT NULL DEFAULT '{}';
+UPDATE views SET explorer=1;
+UPDATE views SET layout='tiled' WHERE layout NOT IN ('tiled','even-horizontal','even-vertical','main-horizontal','main-vertical');
+PRAGMA user_version=3;`); e != nil {
 			return e
 		}
 	}
@@ -138,6 +170,7 @@ func (s *Store) Event(kind, detail string) error {
 type View struct {
 	ID, Name, Folder, Layout string
 	Explorer                 bool
+	Tree                     string `json:"-"`
 }
 type Console struct {
 	ID, Name, Extension, Profile, Folder string
@@ -146,7 +179,7 @@ type Console struct {
 }
 
 func (s *Store) Views() ([]View, error) {
-	r, e := s.DB.Query("SELECT id,name,folder,layout,explorer FROM views ORDER BY rowid")
+	r, e := s.DB.Query("SELECT id,name,folder,layout,explorer,tree FROM views ORDER BY rowid")
 	if e != nil {
 		return nil, e
 	}
@@ -154,7 +187,7 @@ func (s *Store) Views() ([]View, error) {
 	var vs []View
 	for r.Next() {
 		var v View
-		if e = r.Scan(&v.ID, &v.Name, &v.Folder, &v.Layout, &v.Explorer); e != nil {
+		if e = r.Scan(&v.ID, &v.Name, &v.Folder, &v.Layout, &v.Explorer, &v.Tree); e != nil {
 			return nil, e
 		}
 		vs = append(vs, v)
@@ -163,13 +196,17 @@ func (s *Store) Views() ([]View, error) {
 }
 func (s *Store) View(id string) (View, error) {
 	var v View
-	e := s.DB.QueryRow("SELECT id,name,folder,layout,explorer FROM views WHERE id=?", id).Scan(&v.ID, &v.Name, &v.Folder, &v.Layout, &v.Explorer)
+	e := s.DB.QueryRow("SELECT id,name,folder,layout,explorer,tree FROM views WHERE id=?", id).Scan(&v.ID, &v.Name, &v.Folder, &v.Layout, &v.Explorer, &v.Tree)
 	return v, e
 }
 func (s *Store) NewView(name, folder string) (View, error) {
-	v := View{ID: ID(), Name: name, Folder: folder, Layout: "tiled"}
-	_, e := s.DB.Exec("INSERT INTO views(id,name,folder) VALUES(?,?,?)", v.ID, v.Name, v.Folder)
+	v := View{ID: ID(), Name: name, Folder: folder, Layout: "tiled", Explorer: true, Tree: "{}"}
+	_, e := s.DB.Exec("INSERT INTO views(id,name,folder,explorer) VALUES(?,?,?,1)", v.ID, v.Name, v.Folder)
 	return v, e
+}
+func (s *Store) SetTree(view, tree string) error {
+	_, e := s.DB.Exec("UPDATE views SET tree=? WHERE id=?", tree, view)
+	return e
 }
 func (s *Store) UpdateView(v View) error {
 	_, e := s.DB.Exec("UPDATE views SET name=?,folder=?,layout=?,explorer=? WHERE id=?", v.Name, v.Folder, v.Layout, v.Explorer, v.ID)
@@ -278,6 +315,121 @@ func (s *Store) Move(view, id string, delta int) error {
 		if _, e = tx.Exec("UPDATE members SET position=? WHERE view_id=? AND console_id=?", i, view, c.ID); e != nil {
 			return e
 		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) RenameConsole(id, name string) error {
+	r, e := s.DB.Exec("UPDATE consoles SET name=? WHERE id=?", name, id)
+	if e != nil {
+		return e
+	}
+	if n, _ := r.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// DeleteConsole removes the console and, by cascade, its place in every view.
+func (s *Store) DeleteConsole(id string) error {
+	_, e := s.DB.Exec("DELETE FROM consoles WHERE id=?", id)
+	return e
+}
+
+// ConsoleViews lists the views that show a console.
+func (s *Store) ConsoleViews(id string) ([]string, error) {
+	r, e := s.DB.Query("SELECT view_id FROM members WHERE console_id=?", id)
+	if e != nil {
+		return nil, e
+	}
+	defer r.Close()
+	var out []string
+	for r.Next() {
+		var v string
+		if e = r.Scan(&v); e != nil {
+			return nil, e
+		}
+		out = append(out, v)
+	}
+	return out, r.Err()
+}
+
+// Swap exchanges two members of a view, keeping every other position.
+func (s *Store) Swap(view, a, b string) error {
+	tx, e := s.DB.Begin()
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	var pa, pb int
+	if e = tx.QueryRow("SELECT position FROM members WHERE view_id=? AND console_id=?", view, a).Scan(&pa); e != nil {
+		return e
+	}
+	if e = tx.QueryRow("SELECT position FROM members WHERE view_id=? AND console_id=?", view, b).Scan(&pb); e != nil {
+		return e
+	}
+	if _, e = tx.Exec("UPDATE members SET position=? WHERE view_id=? AND console_id=?", pb, view, a); e != nil {
+		return e
+	}
+	if _, e = tx.Exec("UPDATE members SET position=? WHERE view_id=? AND console_id=?", pa, view, b); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+
+// SetOrder stores the given members first, in that order, keeping the rest after.
+func (s *Store) SetOrder(view string, ids []string) error {
+	cs, e := s.Consoles(view)
+	if e != nil {
+		return e
+	}
+	order := append([]string{}, ids...)
+	seen := map[string]bool{}
+	for _, id := range ids {
+		seen[id] = true
+	}
+	for _, c := range cs {
+		if !seen[c.ID] {
+			order = append(order, c.ID)
+		}
+	}
+	tx, e := s.DB.Begin()
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	for i, id := range order {
+		if _, e = tx.Exec("UPDATE members SET position=? WHERE view_id=? AND console_id=?", i, view, id); e != nil {
+			return e
+		}
+	}
+	return tx.Commit()
+}
+
+// Replace puts a new console in the place of an old one, in every view, and
+// removes the old console's metadata.
+func (s *Store) Replace(old string, c Console) error {
+	a, e := json.Marshal(c.Argv)
+	if e != nil {
+		return e
+	}
+	b, e := json.Marshal(c.Env)
+	if e != nil {
+		return e
+	}
+	tx, e := s.DB.Begin()
+	if e != nil {
+		return e
+	}
+	defer tx.Rollback()
+	if _, e = tx.Exec("INSERT INTO consoles VALUES(?,?,?,?,?,?,?,?)", c.ID, c.Name, c.Extension, c.Profile, c.Folder, string(a), string(b), time.Now().UTC().Format(time.RFC3339Nano)); e != nil {
+		return e
+	}
+	if _, e = tx.Exec("UPDATE members SET console_id=? WHERE console_id=?", c.ID, old); e != nil {
+		return e
+	}
+	if _, e = tx.Exec("DELETE FROM consoles WHERE id=?", old); e != nil {
+		return e
 	}
 	return tx.Commit()
 }

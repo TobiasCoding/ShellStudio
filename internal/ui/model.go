@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -20,9 +18,7 @@ import (
 	"shellstudio/internal/explorer"
 	"shellstudio/internal/extensions"
 	"shellstudio/internal/mcp"
-	"shellstudio/internal/mux"
 	"shellstudio/internal/platform"
-	"shellstudio/internal/runner"
 	"shellstudio/internal/store"
 	"shellstudio/internal/viewer"
 )
@@ -52,7 +48,7 @@ type Field struct {
 type Model struct {
 	App                                  *app.App
 	Client                               string
-	Screen, Status                       string
+	Screen, Status, home                 string
 	Width, Height, Index                 int
 	Rows                                 []Row
 	ViewID                               string
@@ -101,22 +97,14 @@ func New(a *app.App, screen string) *Model {
 	e.Focus()
 	m := &Model{App: a, Client: store.ID(), Screen: screen, Width: 100, Height: 30, editor: e, viewport: viewport.New(90, 20), saveStatus: "Saved"}
 	if m.Screen == "" {
-		m.Screen = "views"
+		m.Screen = "notes"
 	}
+	m.home = m.Screen
 	m.refresh()
 	return m
 }
 func (m *Model) Init() tea.Cmd {
 	return tea.Batch(tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) }), textinput.Blink)
-}
-func (m *Model) OpenWorkspace(v store.View) {
-	m.ViewID = v.ID
-	m.folder = v.Folder
-	m.treePath = v.Folder
-	if m.treePath == "" {
-		m.treePath = m.App.CWD
-	}
-	m.goTo("consoles")
 }
 func (m *Model) fail(e error) {
 	if e != nil {
@@ -126,40 +114,6 @@ func (m *Model) fail(e error) {
 func (m *Model) refresh() {
 	m.Rows = nil
 	switch m.Screen {
-	case "views":
-		v, e := m.App.Store.Views()
-		m.fail(e)
-		m.views = v
-		for _, x := range v {
-			m.Rows = append(m.Rows, Row{x.ID, x.Name + "  ·  " + x.Folder})
-		}
-	case "consoles":
-		if v, e := m.App.Store.View(m.ViewID); e == nil {
-			if m.treePath == "" {
-				m.treePath = v.Folder
-				if m.treePath == "" {
-					m.treePath = m.App.CWD
-				}
-			}
-			if entries, err := explorer.List(m.treePath, ""); err == nil {
-				m.treeEntries = entries
-			} else {
-				m.treeEntries = nil
-				m.fail(err)
-			}
-		}
-		cs, e := m.App.Store.Consoles(m.ViewID)
-		m.fail(e)
-		m.consoles = cs
-		p, e := m.App.Mux.Programs()
-		m.fail(e)
-		for _, c := range cs {
-			state := "stopped"
-			if p[c.ID] {
-				state = "running"
-			}
-			m.Rows = append(m.Rows, Row{c.ID, fmt.Sprintf("%-10s %-22s %s", state, c.Name, c.Folder)})
-		}
 	case "notes":
 		ns, e := m.App.Store.Notes(m.search, m.trash)
 		m.fail(e)
@@ -179,17 +133,6 @@ func (m *Model) refresh() {
 				label += "  [disabled]"
 			}
 			m.Rows = append(m.Rows, Row{fmt.Sprint(i), label})
-		}
-	case "files":
-		es, e := explorer.List(m.folder, m.folderSearch)
-		m.fail(e)
-		m.entries = es
-		for _, x := range es {
-			label := x.Name
-			if x.Dir {
-				label += "/"
-			}
-			m.Rows = append(m.Rows, Row{x.Path, label})
 		}
 	}
 	m.Index = max(0, min(m.Index, len(m.Rows)-1))
@@ -267,41 +210,6 @@ func (m *Model) openNote(n store.Note) {
 	m.Screen = "editor"
 	m.editor.Focus()
 }
-func (m *Model) attach() tea.Cmd {
-	v, e := m.App.Store.View(m.ViewID)
-	if e != nil {
-		m.fail(e)
-		return nil
-	}
-	cs, e := m.App.Store.Consoles(m.ViewID)
-	if e != nil {
-		m.fail(e)
-		return nil
-	}
-	session, e := m.App.Mux.Sync(m.Client, v, cs, m.Width, m.Height)
-	if e != nil {
-		m.fail(e)
-		return nil
-	}
-	m.after = func(any) {
-		layout, e := m.App.Mux.Run(true, "display-message", "-p", "-t", "="+session+":", "#{window_layout}")
-		if e != nil {
-			m.fail(e)
-			return
-		}
-		layout = strings.TrimSpace(layout)
-		if mux.ValidLayout(layout) {
-			v, e := m.App.Store.View(m.ViewID)
-			if e == nil {
-				v.Layout = layout
-				e = m.App.Store.UpdateView(v)
-			}
-			m.fail(e)
-		}
-	}
-	return tea.ExecProcess(m.App.Mux.Attach(session), func(e error) tea.Msg { return resultMsg{nil, e} })
-}
-
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case autosaveMsg:
@@ -384,22 +292,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case tea.MouseMsg:
-		if !m.busy && (m.Screen == "views" || m.Screen == "consoles" || m.Screen == "notes" || m.Screen == "extensions" || m.Screen == "files") && v.Button == tea.MouseButtonLeft && v.Action == tea.MouseActionPress && v.Y == 0 {
-			for _, tab := range []struct {
-				name       string
-				start, end int
-			}{{"views", 14, 19}, {"notes", 22, 27}, {"extensions", 30, 40}, {"files", 43, 48}} {
-				if v.X >= tab.start && v.X < tab.end {
-					if tab.name == "files" {
-						m.folder = m.App.CWD
-						m.folderBack = ""
-						m.pick = nil
-					}
-					m.goTo(tab.name)
-					return m, nil
-				}
-			}
-		}
 		if !m.busy && m.Screen == "form" && m.Width >= 70 && v.Button == tea.MouseButtonLeft && v.Action == tea.MouseActionPress {
 			contentHeight := max(1, m.Height-9)
 			cardHeight := 7 + 5*len(m.fields)
@@ -426,31 +318,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.Screen != "editor" && m.Screen != "form" && m.Screen != "confirm" && m.Screen != "viewer" && m.Screen != "text" {
-			if m.Screen == "consoles" && m.Width >= 70 && v.Button == tea.MouseButtonLeft && v.Action == tea.MouseActionPress {
-				sidebarWidth := max(22, min(34, m.Width/3))
-				if v.X < sidebarWidth {
-					idx := v.Y - 6
-					if idx >= 0 && idx < len(m.treeEntries) {
-						m.treeIndex, m.treeFocus = idx, true
-						return m, m.activateTree()
-					}
-					return m, nil
-				}
-			}
 			if v.Button == tea.MouseButtonWheelDown || v.Button == tea.MouseButtonWheelUp {
 				delta := 1
 				if v.Button == tea.MouseButtonWheelUp {
 					delta = -1
 				}
-				if m.Screen == "consoles" && m.Width >= 70 && v.X < max(22, min(34, m.Width/3)) {
-					m.treeIndex = max(0, min(max(0, len(m.treeEntries)-1), m.treeIndex+delta))
-					m.treeFocus = true
-				} else {
-					m.Index = max(0, min(max(0, len(m.Rows)-1), m.Index+delta))
-					if m.Screen == "consoles" {
-						m.treeFocus = false
-					}
-				}
+				m.Index = max(0, min(max(0, len(m.Rows)-1), m.Index+delta))
 			}
 			if m.Screen == "choice" && v.Button == tea.MouseButtonLeft && v.Action == tea.MouseActionPress {
 				cardHeight := len(m.Rows) + 6
@@ -465,7 +338,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				idx := v.Y - 4 + m.offset()
 				if idx >= 0 && idx < len(m.Rows) {
 					m.Index = idx
-					m.treeFocus = false
 					return m, m.activate()
 				}
 			}
@@ -499,28 +371,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.Screen == "form" {
 			if k == "esc" {
 				m.goTo(m.formBack)
-				return m, nil
-			}
-			if k == "ctrl+f" && (strings.Contains(strings.ToLower(m.fields[m.field].Label), "folder") || strings.Contains(strings.ToLower(m.fields[m.field].Label), "carpeta")) {
-				m.folderBack = "form"
-				m.folder = m.App.CWD
-				if p, e := platform.Directory(m.fields[m.field].Input.Value(), "", m.App.CWD); e == nil {
-					m.folder = p
-				}
-				field := m.field
-				m.pick = func(p string) { m.fields[field].Input.SetValue(p); m.Screen = "form" }
-				m.goTo("files")
-				return m, nil
-			}
-			if k == "ctrl+r" && (strings.Contains(strings.ToLower(m.fields[m.field].Label), "folder") || strings.Contains(strings.ToLower(m.fields[m.field].Label), "carpeta")) {
-				c, e := platform.LoadConfig(m.App.Paths.Config)
-				m.fail(e)
-				rows := []Row{}
-				for _, p := range c.Recent {
-					rows = append(rows, Row{p, p})
-				}
-				idx := m.field
-				m.choose("Recent folders", "form", rows, func(p string) tea.Cmd { m.fields[idx].Input.SetValue(p); m.Screen = "form"; return nil })
 				return m, nil
 			}
 			if k == "tab" || k == "shift+tab" || k == "down" || k == "up" {
@@ -567,49 +417,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.detailKey(k, msg)
 		}
 		if k == "esc" {
-			if m.Screen == "consoles" {
-				m.goTo("views")
-			} else if m.Screen == "choice" {
+			if m.Screen == "choice" {
 				m.goTo(m.formBack)
-			} else if m.Screen == "files" && m.folderBack != "" {
-				m.pick = nil
-				m.goTo(m.folderBack)
-			} else {
-				m.goTo("views")
 			}
 			return m, nil
-		}
-		if k == "tab" {
-			tabs := []string{"views", "notes", "extensions", "files"}
-			i := 0
-			for j, s := range tabs {
-				if s == m.Screen {
-					i = j + 1
-				}
-			}
-			if tabs[i%4] == "files" {
-				m.folder = m.App.CWD
-				m.folderBack = ""
-				m.pick = nil
-			}
-			m.goTo(tabs[i%4])
-			return m, nil
-		}
-		if m.Screen == "consoles" && (k == "f6" || k == "ctrl+e") {
-			m.treeFocus = !m.treeFocus
-			return m, nil
-		}
-		if m.Screen == "consoles" && m.treeFocus {
-			switch k {
-			case "up", "k":
-				m.treeIndex = max(0, m.treeIndex-1)
-				return m, nil
-			case "down", "j":
-				m.treeIndex = min(max(0, len(m.treeEntries)-1), m.treeIndex+1)
-				return m, nil
-			case "enter":
-				return m, m.activateTree()
-			}
 		}
 		if k == "up" || k == "k" {
 			m.Index = max(0, m.Index-1)
@@ -667,15 +478,6 @@ func (m *Model) activate() tea.Cmd {
 		return nil
 	}
 	switch m.Screen {
-	case "views":
-		m.ViewID = id
-		if v, err := m.App.Store.View(id); err == nil {
-			m.treePath = v.Folder
-			m.treeIndex = 0
-		}
-		m.goTo("consoles")
-	case "consoles":
-		return m.attach()
 	case "notes":
 		if m.trash {
 			m.Status = "Press r to restore this note"
@@ -699,152 +501,15 @@ func (m *Model) activate() tea.Cmd {
 			m.viewport.GotoTop()
 			m.Screen = "extension"
 		}
-	case "files":
-		if m.Index < len(m.entries) {
-			e := m.entries[m.Index]
-			if e.Dir {
-				m.folder = e.Path
-				m.Index = 0
-				m.refresh()
-			} else {
-				s, err := explorer.Preview(e.Path)
-				m.fail(err)
-				if err == nil {
-					m.viewport.SetContent(s)
-					m.textBack = "files"
-					m.Screen = "text"
-				}
-			}
-		}
 	case "choice":
 		return m.choice(id)
 	}
 	return nil
 }
 
-func (m *Model) activateTree() tea.Cmd {
-	if m.treeIndex < 0 || m.treeIndex >= len(m.treeEntries) {
-		return nil
-	}
-	e := m.treeEntries[m.treeIndex]
-	if e.Dir {
-		m.treePath = e.Path
-		m.treeIndex = 0
-		m.refresh()
-		return nil
-	}
-	preview, err := explorer.Preview(e.Path)
-	m.fail(err)
-	if err == nil {
-		m.viewport.SetContent(preview)
-		m.textBack = "consoles"
-		m.Screen = "text"
-	}
-	return nil
-}
 func (m *Model) key(k string) tea.Cmd {
 	id := m.selectedID()
 	switch m.Screen {
-	case "views":
-		if k == "n" {
-			m.form("New view", "views", []string{"Name", "Base folder (blank uses launch directory)"}, []string{"Main", m.App.CWD}, func(v []string) tea.Cmd {
-				p, e := platform.Directory(v[1], "", m.App.CWD)
-				if e != nil {
-					m.fail(e)
-					return nil
-				}
-				_, e = m.App.Store.NewView(v[0], p)
-				m.fail(e)
-				if e == nil {
-					m.goTo("views")
-				}
-				return nil
-			})
-		}
-		if k == "d" && id != "" {
-			m.ask("Delete this view?\nIts consoles keep running and remain available through Add existing console.", "views", func() tea.Cmd { e := m.App.Store.DeleteView(id); m.goTo("views"); m.fail(e); return nil })
-		}
-	case "consoles":
-		switch k {
-		case "n", "t":
-			m.launchForm(k == "t")
-		case "o":
-			return m.attach()
-		case "r":
-			if id != "" {
-				m.ask("Restart this stopped console explicitly?\nIts saved executable, arguments and folder will be reused.", "consoles", func() tea.Cmd {
-					return m.op(func() (any, error) { return nil, m.App.Restart(id) }, func(any) { m.goTo("consoles") })
-				})
-			}
-		case "x":
-			if id != "" {
-				m.ask("Stop this program?\nThis ends the process in every view. Unsaved program data may be lost.", "consoles", func() tea.Cmd {
-					return m.op(func() (any, error) { return nil, m.App.Stop(id) }, func(any) { m.goTo("consoles") })
-				})
-			}
-		case "d":
-			if id != "" {
-				m.fail(m.App.Store.Unlink(m.ViewID, id))
-				m.refresh()
-			}
-		case "[", "]":
-			d := -1
-			if k == "]" {
-				d = 1
-			}
-			m.fail(m.App.Store.Move(m.ViewID, id, d))
-			m.refresh()
-		case "a":
-			cs, e := m.App.Store.Consoles("")
-			m.fail(e)
-			rows := []Row{}
-			for _, c := range cs {
-				rows = append(rows, Row{c.ID, c.Name + " · " + c.Folder})
-			}
-			m.choose("Add existing console", "consoles", rows, func(id string) tea.Cmd { m.fail(m.App.Store.Link(m.ViewID, id)); m.goTo("consoles"); return nil })
-		case "l":
-			rows := []Row{}
-			for _, l := range []string{"tiled", "even-horizontal", "even-vertical", "main-horizontal", "main-vertical"} {
-				rows = append(rows, Row{l, l})
-			}
-			m.choose("Layout", "consoles", rows, func(l string) tea.Cmd {
-				v, e := m.App.Store.View(m.ViewID)
-				if e == nil {
-					v.Layout = l
-					e = m.App.Store.UpdateView(v)
-				}
-				m.goTo("consoles")
-				m.fail(e)
-				return nil
-			})
-		case "f":
-			v, e := m.App.Store.View(m.ViewID)
-			m.fail(e)
-			m.form("Edit view", "consoles", []string{"Name", "Base folder"}, []string{v.Name, v.Folder}, func(vals []string) tea.Cmd {
-				p, e := platform.Directory(vals[1], "", m.App.CWD)
-				if e != nil {
-					m.fail(e)
-					return nil
-				}
-				v.Name = vals[0]
-				v.Folder = p
-				m.treePath = p
-				e = m.App.Store.UpdateView(v)
-				m.fail(e)
-				if e == nil {
-					m.goTo("consoles")
-				}
-				return nil
-			})
-		case "b":
-			v, e := m.App.Store.View(m.ViewID)
-			if e == nil {
-				v.Explorer = !v.Explorer
-				e = m.App.Store.UpdateView(v)
-			}
-			m.fail(e)
-			m.refresh()
-		}
 	case "notes":
 		switch k {
 		case "n":
@@ -922,116 +587,9 @@ func (m *Model) key(k string) tea.Cmd {
 		if k == "n" {
 			m.commandForm()
 		}
-	case "files":
-		switch k {
-		case "s":
-			if m.pick != nil {
-				f := m.pick
-				m.pick = nil
-				f(m.folder)
-			} else {
-				m.Status = "Folder: " + m.folder
-			}
-		case "p":
-			m.form("Open folder", "files", []string{"Folder"}, []string{m.folder}, func(v []string) tea.Cmd {
-				p, e := platform.Directory(v[0], "", m.App.CWD)
-				if e != nil {
-					m.fail(e)
-					return nil
-				}
-				m.folder = p
-				m.goTo("files")
-				return nil
-			})
-		case "/":
-			m.form("Filter this folder (up to 2,000 entries)", "files", []string{"Name contains"}, []string{m.folderSearch}, func(v []string) tea.Cmd { m.folderSearch = v[0]; m.goTo("files"); return nil })
-		case "c":
-			if id != "" {
-				return func() tea.Msg { _, e := os.Stdout.WriteString(explorer.OSC52(id)); return resultMsg{nil, e} }
-			}
-		case "h":
-			m.viewport.SetContent(explorer.SSHHelp(id))
-			m.Screen = "text"
-		case "e":
-			if id != "" {
-				editor := os.Getenv("EDITOR")
-				if editor == "" {
-					editor = "vi"
-				}
-				c := exec.Command(editor, id)
-				c.Env = runner.Env(nil)
-				return tea.ExecProcess(c, func(e error) tea.Msg { return resultMsg{nil, e} })
-			}
-		case "r":
-			if id != "" {
-				m.form("Rename file or folder", "files", []string{"New name (same directory)"}, []string{filepath.Base(id)}, func(v []string) tea.Cmd {
-					if filepath.Base(v[0]) != v[0] || v[0] == "." || v[0] == ".." {
-						m.Status = "Invalid name"
-						return nil
-					}
-					dest := filepath.Join(filepath.Dir(id), v[0])
-					if _, e := os.Lstat(dest); !os.IsNotExist(e) {
-						m.Status = "Destination already exists"
-						return nil
-					}
-					e := os.Rename(id, dest)
-					m.goTo("files")
-					m.fail(e)
-					return nil
-				})
-			}
-		}
 	}
 	return nil
 }
-func (m *Model) launchForm(terminal bool) {
-	open := func(id string) tea.Cmd {
-		profiles := "default"
-		if id != "terminal" {
-			man, e := m.App.Manifest(id)
-			if e != nil {
-				m.fail(e)
-				return nil
-			}
-			keys := []string{}
-			for k := range man.Profiles {
-				keys = append(keys, k)
-			}
-			cfg, e := platform.LoadConfig(m.App.Paths.Config)
-			if e != nil {
-				m.fail(e)
-				return nil
-			}
-			for k := range cfg.Extensions[id].Profiles {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			profiles = strings.Join(keys, ", ")
-		}
-		title := "Nueva consola"
-		if id == "terminal" {
-			title = "Nueva terminal"
-		}
-		profileLabel := "Perfil (opciones: " + profiles + "; vacío usa el predeterminado)"
-		m.form(title, "consoles", []string{"Nombre", profileLabel, "Carpeta de trabajo (vacía usa la carpeta de la vista)"}, []string{id, "", ""}, func(v []string) tea.Cmd {
-			view := m.ViewID
-			return m.op(func() (any, error) { return m.App.Launch(view, v[0], id, v[1], v[2]) }, func(any) { m.goTo("consoles") })
-		})
-		return nil
-	}
-	if terminal {
-		open("terminal")
-		return
-	}
-	rows := []Row{{"terminal", "Terminal"}}
-	for _, e := range extensions.Catalog(m.App.Paths.Config) {
-		if e.Error == "" && m.App.Extensions.Enabled(e.Manifest) {
-			rows = append(rows, Row{e.Manifest.ID, e.Manifest.ID})
-		}
-	}
-	m.choose("Launch a console", "consoles", rows, open)
-}
-
 func (m *Model) detailKey(k string, msg tea.Msg) tea.Cmd {
 	if k == "esc" {
 		if m.Screen == "extension" {
@@ -1040,8 +598,8 @@ func (m *Model) detailKey(k string, msg tea.Msg) tea.Cmd {
 			back := m.textBack
 			m.textBack = ""
 			m.goTo(back)
-		} else {
-			m.goTo("views")
+		} else if m.home != m.Screen {
+			m.goTo(m.home)
 		}
 		return nil
 	}
@@ -1219,20 +777,7 @@ func (m *Model) View() string {
 	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	selected := lipgloss.NewStyle().Foreground(lipgloss.Color("235")).Background(lipgloss.Color("86"))
-	header := accent.Render(" ShellStudio ") + "  Views · Notes · Extensions · Files"
 	title := strings.ToUpper(m.Screen)
-	if m.Screen == "consoles" {
-		if v, e := m.App.Store.View(m.ViewID); e == nil {
-			layout := map[string]string{"tiled": "tiled", "even-horizontal": "Columnas", "even-vertical": "Filas", "main-vertical": "Panel principal a la izquierda", "main-horizontal": "Panel principal arriba"}[v.Layout]
-			if layout == "" {
-				layout = "Personalizado"
-			}
-			title = v.Name + " · " + layout + " · " + v.Folder
-		}
-	}
-	if m.Screen == "files" {
-		title = m.folder
-	}
 	if m.Screen == "notes" && m.trash {
 		title = "NOTES · Trash"
 	}
@@ -1246,14 +791,8 @@ func (m *Model) View() string {
 		for _, f := range m.fields {
 			body += labelStyle.Render(explorer.Clean(f.Label)) + "\n" + inputStyle.Render(f.Input.View()) + "\n\n"
 		}
-		button := "[ Guardar ]"
-		if strings.HasPrefix(strings.ToLower(m.formTitle), "nueva terminal") {
-			button = "[ Crear terminal ]"
-		} else if strings.HasPrefix(strings.ToLower(m.formTitle), "nueva consola") {
-			button = "[ Crear consola ]"
-		}
-		body += lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Render(button) + "     " + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("[ Cancelar ]")
-		help = "Tab cambiar campo · Enter confirmar · Esc cancelar · Ctrl+F elegir carpeta · Ctrl+R recientes"
+		body += lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Render("[ Save ]") + "     " + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("[ Cancel ]")
+		help = "Tab next field · Enter confirm · Esc cancel"
 	case "choice":
 		title = m.formTitle
 		help = "↑↓ choose · Enter select · Esc back"
@@ -1271,17 +810,11 @@ func (m *Model) View() string {
 		help = "i install · e enable · d disable · c profile · m MCP · u uninstall · X purge · Esc"
 	case "text", "viewer":
 		body = m.viewport.View()
-		help = "↑↓ / PgUp/PgDn scroll · / filter viewer · r refresh · Esc menu · q quit"
-	case "views":
-		help = "n new view · d delete view · Enter consoles · Tab section · ? SSH help · q quit"
-	case "consoles":
-		help = "F6 lista de archivos · t Terminal nueva · n otra consola · Enter abrir · f carpeta · l distribución · a vincular · d desvincular · r reiniciar · x detener"
+		help = "↑↓ / PgUp/PgDn scroll · / filter viewer · r refresh · Esc back · q quit"
 	case "notes":
-		help = "n new · Enter edit · / search · r rename/restore · d trash · t trash view · e export · Tab section"
+		help = "n new · Enter edit · / search · r rename/restore · d trash · t trash view · e export · q quit"
 	case "extensions":
-		help = "Enter details · a import file/HTTPS · n existing command · Tab section"
-	case "files":
-		help = "Enter open · s select · p path · / filter · c copy · e editor · r rename · h SSH · Tab section"
+		help = "Enter details · a import file/HTTPS · n existing command · q quit"
 	}
 	if body == "" {
 		start := m.offset()
@@ -1297,79 +830,20 @@ func (m *Model) View() string {
 			body = "  Nothing here yet. Use the actions below to get started.\n"
 		}
 	}
-	header = accent.Render("ShellStudio") + "   " + navTab("Views", m.Screen == "views") + "   " + navTab("Notes", m.Screen == "notes") + "   " + navTab("Extensions", m.Screen == "extensions") + "   " + navTab("Files", m.Screen == "files")
 	contentHeight := max(1, m.Height-9)
 	content := lipgloss.NewStyle().MaxWidth(m.Width).Height(contentHeight).MaxHeight(contentHeight).Render(body)
-	if m.Screen == "consoles" && m.Width >= 70 {
-		content = m.consoleWorkspace(contentHeight, accent, muted, selected)
-	}
 	if m.Screen == "form" || m.Screen == "choice" || m.Screen == "confirm" {
 		cardWidth := max(18, min(72, m.Width-6))
 		card := lipgloss.NewStyle().Width(cardWidth).Padding(1, 2).Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("86")).Background(lipgloss.Color("235")).Render(accent.Render(title) + "\n\n" + body)
 		content = lipgloss.Place(m.Width, contentHeight, lipgloss.Center, lipgloss.Center, card)
 	}
-	pageTitle := accent.Render(explorer.Clean(title))
-	if m.Screen == "form" || m.Screen == "choice" || m.Screen == "confirm" {
-		pageTitle = ""
-	}
-	return header + "\n" + muted.Render(strings.Repeat("─", max(1, m.Width-1))) + "\n" + pageTitle + "\n\n" + content + "\n" + muted.Render(explorer.Clean(help)) + "\n" + lipgloss.NewStyle().MaxWidth(m.Width).Render(explorer.Clean(m.Status)) + "\n"
+	// The console header above already names the program: no second bar.
+	return accent.Render(explorer.Clean(title)) + "\n" + muted.Render(strings.Repeat("─", max(1, m.Width-1))) + "\n\n\n" + content + "\n" + muted.Render(explorer.Clean(help)) + "\n" + lipgloss.NewStyle().MaxWidth(m.Width).Render(explorer.Clean(m.Status)) + "\n"
 }
 
-func navTab(label string, active bool) string {
-	style := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	if active {
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Underline(true)
-	}
-	return style.Render(label)
-}
-
-func (m *Model) consoleWorkspace(height int, accent, muted, selected lipgloss.Style) string {
-	sidebarWidth := max(22, min(34, m.Width/3))
-	mainWidth := max(20, m.Width-sidebarWidth-1)
-	rowsHeight := max(1, height-2)
-	var tree strings.Builder
-	tree.WriteString(accent.Render("Files") + "\n")
-	tree.WriteString(muted.Render(explorer.Clean(m.treePath)) + "\n")
-	start := max(0, m.treeIndex-rowsHeight+1)
-	for i := start; i < len(m.treeEntries) && i < start+rowsHeight; i++ {
-		entry := m.treeEntries[i]
-		label := entry.Name
-		if entry.Dir {
-			label = "▸ " + label + "/"
-		} else {
-			label = "   " + label
-		}
-		label = lipgloss.NewStyle().MaxWidth(sidebarWidth - 3).Render(explorer.Clean(label))
-		if m.treeFocus && i == m.treeIndex {
-			label = selected.Render(label)
-		}
-		tree.WriteString(label + "\n")
-	}
-	if len(m.treeEntries) == 0 {
-		tree.WriteString(muted.Render("No se pudo leer la carpeta") + "\n")
-	}
-	main := ""
-	if len(m.Rows) == 0 {
-		main = "  No hay consolas en esta vista.\n\n  Pulsa t para crear una terminal.\n"
-	} else {
-		start := m.offset()
-		end := min(len(m.Rows), start+rowsHeight)
-		for i := start; i < end; i++ {
-			line := lipgloss.NewStyle().MaxWidth(mainWidth - 2).Render(explorer.Clean(m.Rows[i].Label))
-			if i == m.Index && !m.treeFocus {
-				line = selected.Render(line)
-			}
-			main += "  " + line + "\n"
-		}
-	}
-	left := lipgloss.NewStyle().Width(sidebarWidth).Height(height).MaxHeight(height).Render(tree.String())
-	right := lipgloss.NewStyle().Width(mainWidth).Height(height).MaxHeight(height).Render(main)
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, muted.Render("│"), right)
-}
 func (m *Model) SetViewer(kind, path string) {
 	m.Screen = "viewer"
 	m.viewerKind = kind
 	m.viewerPath = path
 	m.viewport.SetContent("Loading…")
 }
-func (m *Model) SetExplorer(path string) { m.folder = path; m.goTo("files") }

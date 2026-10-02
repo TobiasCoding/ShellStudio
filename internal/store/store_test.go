@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func testStore(t *testing.T) *Store {
@@ -18,6 +19,47 @@ func testStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
+}
+
+func TestDurableWritersKeepFullSynchronization(t *testing.T) {
+	s := testStore(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	first := make(chan error, 1)
+	second := make(chan error, 1)
+	check := func() error {
+		var mode int
+		if e := s.DB.QueryRow("PRAGMA synchronous").Scan(&mode); e != nil {
+			return e
+		}
+		if mode != 2 {
+			return fmt.Errorf("durable write ran with synchronous=%d", mode)
+		}
+		return nil
+	}
+	go func() {
+		first <- s.Durable(func() error {
+			close(entered)
+			<-release
+			return check()
+		})
+	}()
+	<-entered
+	go func() { second <- s.Durable(check) }()
+	select {
+	case e := <-second:
+		close(release)
+		<-first
+		t.Fatalf("another writer changed synchronization before the first finished: %v", e)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if e := <-first; e != nil {
+		t.Fatal(e)
+	}
+	if e := <-second; e != nil {
+		t.Fatal(e)
+	}
 }
 func TestNotesConflictAndTrash(t *testing.T) {
 	s := testStore(t)
@@ -151,7 +193,7 @@ func TestBackupRecoveryAndMigrations(t *testing.T) {
 	}
 	var v int
 	b.DB.QueryRow("PRAGMA user_version").Scan(&v)
-	if v != 2 {
+	if v != 3 {
 		t.Fatal(v)
 	}
 	b.DB.Exec("PRAGMA user_version=999")
@@ -213,5 +255,30 @@ func TestRejectSymlinkDatabase(t *testing.T) {
 	b, _ := os.ReadFile(target)
 	if string(b) != "keep" {
 		t.Fatal("modified target")
+	}
+}
+
+// Schema 3 shows the explorer of existing views and names their layouts.
+func TestSchemaThreeMigratesViews(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "db")
+	s, e := Open(p)
+	if e != nil {
+		t.Fatal(e)
+	}
+	v, _ := s.NewView("Old", "/")
+	_, e = s.DB.Exec(`ALTER TABLE views DROP COLUMN tree; UPDATE views SET explorer=0, layout='1bdd,209x50,0,0{104x50,0,0,2,104x50,105,0,4}'; PRAGMA user_version=2;`)
+	if e != nil {
+		t.Fatal(e)
+	}
+	s.Close()
+	s, e = Open(p)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	got, e := s.View(v.ID)
+	if e != nil || !got.Explorer || got.Layout != "tiled" || got.Tree != "{}" {
+		t.Fatal(got, e)
 	}
 }

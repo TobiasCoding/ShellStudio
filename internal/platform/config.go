@@ -59,15 +59,28 @@ func UpdateConfig(dir string, update func(*Config) error) error {
 	}
 	return WriteJSON(filepath.Join(dir, "config.json"), c)
 }
+
+// Remember keeps recent folders; a preference, written without fsync.
 func Remember(dir, path string) error {
-	return UpdateConfig(dir, func(c *Config) error {
-		a := []string{path}
-		for _, p := range c.Recent {
-			if p != path && len(a) < 20 {
-				a = append(a, p)
-			}
+	f, e := Lock(filepath.Join(dir, "config.lock"))
+	if e != nil {
+		return e
+	}
+	defer Unlock(f)
+	c, e := LoadConfig(dir)
+	if e != nil {
+		return e
+	}
+	a := []string{path}
+	for _, p := range c.Recent {
+		if p != path && len(a) < 20 {
+			a = append(a, p)
 		}
-		c.Recent = a
-		return nil
-	})
+	}
+	c.Recent = a
+	b, e := json.MarshalIndent(c, "", "  ")
+	if e != nil {
+		return e
+	}
+	return ReplaceFile(filepath.Join(dir, "config.json"), append(b, '\n'))
 }

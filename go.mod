@@ -2,6 +2,9 @@ module shellstudio
 
 go 1.23.0
 
+// ShellStudio fixes its dark theme without probing the terminal at package init.
+replace github.com/charmbracelet/bubbletea => ./third_party/bubbletea
+
 require (
 	github.com/charmbracelet/bubbles v0.21.0
 	github.com/charmbracelet/bubbletea v1.3.4
