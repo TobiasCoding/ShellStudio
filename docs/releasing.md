@@ -16,8 +16,8 @@ After merging the changes and confirming CI passes, publish the current version
 from the reviewed `main` commit:
 
 ```sh
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
 This starts Publish release. Wait for that workflow to succeed and for the
@@ -26,12 +26,18 @@ curl installer command. A tag by itself or a source-only release is insufficient
 If the workflow fails, resolve its reported error before retrying; do not mark a
 draft latest until every required asset is uploaded.
 
+Tags refer to a specific commit. Fixing `main` after a failed tag build does not
+update that tag, and rerunning its workflow builds the old commit again. Publish
+a new patch tag from the corrected commit; for example, `v0.2.1` supersedes the
+failed `v0.2.0` build. A green Verify and build run on `main` does not mean the
+separate Publish release workflow succeeded.
+
 ## Subsequent releases
 
 1. Update the default version in `Makefile` and `cmd/shellstudio/main.go`.
 2. Review and merge the source, installer, and release workflow onto `main`.
 3. Run `make check` locally. Review the publication scan and generated source.
-4. Create and push a stable tag, for example `v0.2.0`, pointing at that commit.
+4. Create and push a stable tag, for example `v0.2.1`, pointing at that commit.
 5. The Publish release workflow repeats verification, builds Linux amd64/arm64,
    uploads all artifacts into a draft, then publishes it as the latest release.
 6. Verify the one-line installer in a clean account and check `shellstudio update
@@ -52,7 +58,7 @@ Required assets, all from the same tag:
 - `shellstudio-VERSION-source.tar.gz`, including third-party licenses
 - `LICENSE` and `THIRD_PARTY_NOTICES.md`
 
-Build locally with `make release VERSION=0.2.0`. Install without GitHub using
+Build locally with `make release VERSION=0.2.1`. Install without GitHub using
 `sh scripts/install.sh --from "$PWD/dist"`. CI tests installers using isolated
 homes and simulated HTTPS release downloads; updater tests use an isolated TLS
 server and real binaries. No tests publish a release or modify user workspaces.

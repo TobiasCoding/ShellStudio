@@ -1,6 +1,6 @@
 GO ?= go
 export TMPDIR := $(CURDIR)/.work/tmp
-VERSION ?= 0.2.0
+VERSION ?= 0.2.1
 SOURCE_DATE_EPOCH ?= 0
 
 .PHONY: all build test race integration check release clean

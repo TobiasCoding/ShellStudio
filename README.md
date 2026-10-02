@@ -36,7 +36,7 @@ installer. To review the script or select a version first:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/TobiasCoding/ShellStudio/main/scripts/install.sh -o install.sh
 less install.sh
-sh install.sh --version v0.2.0
+sh install.sh --version v0.2.1
 ```
 
 Options include `--bin-dir /absolute/directory`, `--no-path`, and `--yes` to permit
