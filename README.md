@@ -1,6 +1,6 @@
 
 <div align="center">
-<img src="logo.svg" width="40%"/>
+<img src="logo.svg" width="80%"/>
 </div>
 
 Shell Studio is a standalone Linux terminal workspace for local terminals, WSL and SSH.
