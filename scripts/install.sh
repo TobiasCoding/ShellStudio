@@ -110,7 +110,12 @@ main() {
         if [ -z "$release" ]; then
             latest=$(fetch --output /dev/null --write-out '%{url_effective}' "$repo/releases/latest") ||
                 fail "no public GitHub release is available; check repository visibility and published releases"
-            case "$latest" in "$repo/releases/tag/"*) release=${latest##*/} ;; *) fail "could not resolve a stable GitHub release" ;; esac
+            case "$latest" in
+                "$repo/releases/tag/"*) release=${latest##*/} ;;
+                "$repo/releases"|"$repo/releases/")
+                    fail "no stable release has been published. A push to main only builds CI artifacts. The maintainer must push a vMAJOR.MINOR.PATCH tag and let the Publish release workflow finish, then retry. See $repo/blob/main/docs/releasing.md" ;;
+                *) fail "unexpected GitHub release redirect: $latest" ;;
+            esac
         fi
         printf '%s\n' "$release" | awk '/^v?[0-9]+\.[0-9]+\.[0-9]+$/ {ok=1} END {exit !ok}' ||
             fail "release must be a stable vMAJOR.MINOR.PATCH tag"

@@ -120,7 +120,7 @@ out = args[args.index("--output")+1]
 assert "--proto" in args and "--proto-redir" in args
 with open(os.environ["CURL_LOG"], "a") as f: f.write(url+"\\n")
 if url.endswith("/latest"):
-    print("https://github.com/TobiasCoding/ShellStudio/releases/tag/"+os.environ["FIXTURE_TAG"], end="")
+    print(os.environ.get("LATEST_REDIRECT", "https://github.com/TobiasCoding/ShellStudio/releases/tag/"+os.environ["FIXTURE_TAG"]), end="")
 elif os.environ.get("FAIL_DOWNLOAD") == "1" and "shellstudio-linux" in url:
     pathlib.Path(out).write_bytes(b"partial download")
     sys.exit(18)
@@ -145,6 +145,20 @@ else:
         self.mock_network(fail=True)
         self.install(offline=False, success=False)
         self.assert_preserved()
+
+    def test_no_published_release_explains_how_to_publish(self):
+        self.seed_old()
+        self.mock_network()
+        for suffix in ["/releases", "/releases/"]:
+            with self.subTest(suffix=suffix):
+                self.env["LATEST_REDIRECT"] = "https://github.com/TobiasCoding/ShellStudio" + suffix
+                result = self.install(offline=False, success=False)
+                self.assertIn("no stable release has been published", result.stderr)
+                self.assertIn("Publish release workflow", result.stderr)
+                self.assert_preserved()
+        urls = (self.root / "requests").read_text().splitlines()
+        self.assertEqual(len(urls), 2)
+        self.assertTrue(all(url.endswith("/latest") for url in urls))
 
     def test_command_name_directory_does_not_shadow_version(self):
         (self.root / "version").mkdir()

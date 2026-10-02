@@ -5,6 +5,29 @@ The installer and updater use stable GitHub Releases in
 version. Public installation requires public access to the repository, the raw
 installer on `main`, and the release assets.
 
+## First release
+
+A successful push to `main` runs Verify and build and stores build artifacts in
+Actions. It does not publish a GitHub Release. Until the first stable release is
+published, `/releases/latest` redirects to the empty releases page and the public
+installer has no binary to download.
+
+After merging the changes and confirming CI passes, publish the current version
+from the reviewed `main` commit:
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+This starts Publish release. Wait for that workflow to succeed and for the
+release page to show both Linux binaries and `SHA256SUMS`, then retry the same
+curl installer command. A tag by itself or a source-only release is insufficient.
+If the workflow fails, resolve its reported error before retrying; do not mark a
+draft latest until every required asset is uploaded.
+
+## Subsequent releases
+
 1. Update the default version in `Makefile` and `cmd/shellstudio/main.go`.
 2. Review and merge the source, installer, and release workflow onto `main`.
 3. Run `make check` locally. Review the publication scan and generated source.
