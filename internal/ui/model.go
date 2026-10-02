@@ -1223,7 +1223,7 @@ func (m *Model) View() string {
 	title := strings.ToUpper(m.Screen)
 	if m.Screen == "consoles" {
 		if v, e := m.App.Store.View(m.ViewID); e == nil {
-			layout := map[string]string{"tiled": "Mosaico", "even-horizontal": "Columnas", "even-vertical": "Filas", "main-vertical": "Panel principal a la izquierda", "main-horizontal": "Panel principal arriba"}[v.Layout]
+			layout := map[string]string{"tiled": "tiled", "even-horizontal": "Columnas", "even-vertical": "Filas", "main-vertical": "Panel principal a la izquierda", "main-horizontal": "Panel principal arriba"}[v.Layout]
 			if layout == "" {
 				layout = "Personalizado"
 			}
@@ -1275,7 +1275,7 @@ func (m *Model) View() string {
 	case "views":
 		help = "n new view · d delete view · Enter consoles · Tab section · ? SSH help · q quit"
 	case "consoles":
-		help = "F6 lista de archivos · t nueva terminal · n otra consola · Enter abrir · f carpeta · l distribución · a vincular · d desvincular · r reiniciar · x detener"
+		help = "F6 lista de archivos · t Terminal nueva · n otra consola · Enter abrir · f carpeta · l distribución · a vincular · d desvincular · r reiniciar · x detener"
 	case "notes":
 		help = "n new · Enter edit · / search · r rename/restore · d trash · t trash view · e export · Tab section"
 	case "extensions":
