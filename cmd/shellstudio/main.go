@@ -23,7 +23,7 @@ import (
 	"shellstudio/internal/ui"
 )
 
-var version = "0.2.1"
+var version = "0.2.2"
 
 func main() {
 	syscall.Umask(0077)
