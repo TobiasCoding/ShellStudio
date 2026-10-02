@@ -175,8 +175,15 @@ Python venvs and include read-only viewers. No private sessions or data migrate.
     shellstudio doctor
     shellstudio backup /absolute/path/backup.db
     shellstudio validate examples/htop.json
+    make preview
     make check
-    make release
+    make publish
+
+`make preview` runs the working code with separate local data and tmux sessions.
+`make check` tests without publishing. After reviewing and committing changes,
+`make publish` tests an isolated candidate, assigns the next patch version and
+pushes its release tag. GitHub publishes the update only after its checks pass.
+See [the development and release workflow](docs/releasing.md).
 
 F2 → Forward ports opens the SSH forwarding dialog. Dropping a Windows path in
 the explorer opens an SCP upload dialog. OSC 52 clipboard copying needs support

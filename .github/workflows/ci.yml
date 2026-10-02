@@ -13,9 +13,10 @@ jobs:
           cache: true
       - run: sudo apt-get update && sudo apt-get install -y tmux python3-venv
       - run: make check
-      - run: make release
+      - name: Build development candidate (no update channel)
+        run: make build VERSION="$(cat VERSION)-dev.${GITHUB_SHA::8}"
       - uses: actions/upload-artifact@v4
         with:
-          name: shellstudio-linux
-          path: dist/
+          name: shellstudio-candidate-${{ github.sha }}
+          path: bin/shellstudio
           if-no-files-found: error

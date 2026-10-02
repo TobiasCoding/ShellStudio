@@ -4,8 +4,8 @@ Use English for code, comments, documentation and UI. Keep process lifetime
 separate from presentation. Do not add hidden installers, permission bypasses,
 automatic updates or telemetry.
 
+    make preview
     make check
-    make release
 
 Tests use private state below .work, isolated tmux sockets and synthetic data.
 Never test against live MCP databases, agent configurations or tmux servers.
@@ -18,7 +18,11 @@ pinned in go.mod/go.sum. Run gofmt on Go source.
 
 Before publication, run scripts/publication_check.py and inspect the diff.
 Exclude runtime databases, logs, conversations, credentials and personal paths.
-CI builds Linux amd64/arm64 binaries and checksums; owners decide publication.
+CI tests commits and saves candidate artifacts without notifying users. Maintainers
+publish reviewed commits with `make publish`: it tests an isolated candidate,
+bumps VERSION and atomically pushes the release tag. The tag workflow builds
+Linux amd64/arm64 binaries and publishes only after verification. See
+[releasing](docs/releasing.md) for the preview, privacy and recovery details.
 
 Contributions use GPL-3.0-only. Preserve notices on bundled MIT code and identify
 modifications to it.

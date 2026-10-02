@@ -21,6 +21,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "${TAG#v}" = "$(cat VERSION)"
           echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
           echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
       - uses: actions/setup-go@v5

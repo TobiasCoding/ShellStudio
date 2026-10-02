@@ -1,73 +1,106 @@
-# Publishing releases
+# Development, previews and releases
 
-The installer and updater use stable GitHub Releases in
-`TobiasCoding/ShellStudio`. They do not use the latest commit on `main` as a
-version. Public installation requires public access to the repository, the raw
-installer on `main`, and the release assets.
+The installer and updater use the latest **published stable GitHub Release** in
+`TobiasCoding/ShellStudio`. A commit, local build, CI artifact or tag alone does
+not notify users. `VERSION` is the single stable version source; direct `go build`
+uses `dev`. Normal pushes and pull requests run CI without publishing releases.
 
-## First release
-
-A successful push to `main` runs Verify and build and stores build artifacts in
-Actions. It does not publish a GitHub Release. Until the first stable release is
-published, `/releases/latest` redirects to the empty releases page and the public
-installer has no binary to download.
-
-After merging the changes and confirming CI passes, publish the current version
-from the reviewed `main` commit:
+## Try changes before releasing
 
 ```sh
-git tag v0.2.1
-git push origin v0.2.1
+make preview
 ```
 
-This starts Publish release. Wait for that workflow to succeed and for the
-release page to show both Linux binaries and `SHA256SUMS`, then retry the same
-curl installer command. A tag by itself or a source-only release is insufficient.
-If the workflow fails, resolve its reported error before retrying; do not mark a
-draft latest until every required asset is uploaded.
+This builds the current working tree (including uncommitted changes) with a
+`VERSION-dev.COMMIT` label and launches it with separate config, database, state
+and tmux sockets under `.work/preview/`. It neither replaces the installed binary
+nor checks for updates. Preview state persists between launches, so you can try
+F2/F3 menus, drag and drop, notes and console reconnects before publishing.
+Commands you run inside preview consoles still run as your user; this is data
+isolation, not a security sandbox. `make clean` removes preview state as well.
 
-Tags refer to a specific commit. Fixing `main` after a failed tag build does not
-update that tag, and rerunning its workflow builds the old commit again. Publish
-a new patch tag from the corrected commit; for example, `v0.2.1` supersedes the
-failed `v0.2.0` build. A green Verify and build run on `main` does not mean the
-separate Publish release workflow succeeded.
+Use `python3 scripts/release.py preview --build-only` to build without launching.
+Launch through `make preview` to ensure the separate environment is always set.
 
-## Subsequent releases
+Run the complete automated suite without packaging, changing the version,
+creating tags, pushing or notifying users:
 
-1. Update the default version in `Makefile` and `cmd/shellstudio/main.go`.
-2. Review and merge the source, installer, and release workflow onto `main`.
-3. Run `make check` locally. Review the publication scan and generated source.
-4. Create and push a stable tag, for example `v0.2.1`, pointing at that commit.
-5. The Publish release workflow repeats verification, builds Linux amd64/arm64,
-   uploads all artifacts into a draft, then publishes it as the latest release.
-6. Verify the one-line installer in a clean account and check `shellstudio update
-   --check` from the preceding version.
+```sh
+python3 scripts/release.py check
+```
 
-Tagging and pushing intentionally publishes a release after CI succeeds. The
-workflow requires GitHub Actions with contents-write permission; no external
-server, package registry, personal access token or committed credential is needed.
-A failed upload leaves a draft, not a partially published update. Inspect or
-remove that draft before retrying the tag workflow. Never replace the assets of
-an existing published version: fix the issue in a new version.
+`make check` is equivalent. It includes Go tests, race detection, real terminal
+interactions, offline MCP, installer tests, release pipeline tests, vet and the
+publication audit. Commit reviewed new files so the audit includes them.
+CI also saves a commit-labelled candidate executable as an Actions artifact.
+Those artifacts are for testing, not update distribution.
 
-Required assets, all from the same tag:
+## Publish a verified release
 
-- `shellstudio-linux-amd64`
-- `shellstudio-linux-arm64`
-- `SHA256SUMS` (sha256sum format with bare asset filenames)
-- `shellstudio-VERSION-source.tar.gz`, including third-party licenses
+Review and commit the source changes on `main`, then run:
+
+```sh
+make publish
+# Optional: python3 scripts/release.py publish --bump minor
+# Optional: python3 scripts/release.py publish --bump major
+```
+
+Requirements: Git push access to `origin`, Go, Python 3, make and tmux. No local
+GitHub CLI or stored API token is required. The default bump is `patch`.
+
+The script:
+
+1. Requires a clean `main`, fetches tags and refuses a branch behind `origin/main`.
+2. Audits tracked source and every outgoing commit, including files later deleted.
+3. Computes the next numeric version from `VERSION` and all stable tags.
+4. Freezes the candidate in an ignored directory and runs the full suite there.
+5. Builds both Linux architectures, checks ELF headers, audits the source archive
+   and generates checksums. A failed check leaves the version and Git refs alone.
+6. Confirms source stayed unchanged, commits `VERSION`, creates an annotated tag
+   and atomically pushes `main` plus that tag. It never force-pushes.
+7. GitHub's **Publish release** workflow verifies tag/version agreement, repeats
+   tests and builds, uploads all required files to a draft, then publishes latest.
+
+Wait for **Publish release** to succeed. The local script reports a successful
+push, not a successful remote release. Existing users see the offer at their next
+interactive startup, or through `shellstudio update --check`; installation still
+requires their acceptance. A running workspace is not interrupted.
+
+If a push fails, the script prints the exact retry command; the verified local
+commit and tag remain. If CI fails, no update is published. Fix code with a new
+patch release; never move a public tag or replace published binaries. An upload
+failure may leave a draft: inspect/remove that draft before rerunning its workflow.
+
+## Publication boundaries
+
+`.gitignore` excludes local databases, logs, environment files, keys, sockets,
+runtime folders, `.work/`, `bin/` and `dist/`. The publication audit additionally
+rejects prohibited tracked paths, symlinks, unexpected binaries and recognized
+credential patterns. It also checks outgoing history before the automated push.
+These checks cannot recognize every possible personal datum: review staged
+changes, and keep personal experiments in `.work/` or outside the repository.
+
+Packaging uses the audited **Git file list**, never recursive directory inclusion.
+An untracked personal file inside `docs/` or `tests/` cannot enter the source
+archive. Exported source contains its own file manifest for rebuilding without
+Git. Third-party source and licenses are included. No test fixtures from `.work/`
+are published. GitHub's automatically generated source downloads contain the
+tagged tracked tree, which is subject to the same publication gate.
+
+Required release assets:
+
+- `shellstudio-linux-amd64` and `shellstudio-linux-arm64`
+- `SHA256SUMS`
+- `shellstudio-VERSION-source.tar.gz`
 - `LICENSE` and `THIRD_PARTY_NOTICES.md`
 
-Build locally with `make release VERSION=0.2.1`. Install without GitHub using
-`sh scripts/install.sh --from "$PWD/dist"`. CI tests installers using isolated
-homes and simulated HTTPS release downloads; updater tests use an isolated TLS
-server and real binaries. No tests publish a release or modify user workspaces.
+`make release` packages the current `VERSION` locally without creating a public
+release. For an offline installation use `sh scripts/install.sh --from "$PWD/dist"`.
+The installer validates checksums, architecture and version before replacement.
 
-GitHub determines the latest published stable release; ShellStudio additionally
-compares the numeric major/minor/patch version and refuses automatic downgrades
-and prereleases. API failures, rate limits, missing assets and offline hosts
-leave the current executable usable. The startup check can be disabled with
-`SHELLSTUDIO_NO_UPDATE_CHECK=1`; manual `shellstudio update` remains available.
+GitHub supplies the latest stable release; ShellStudio refuses automatic
+downgrades and prereleases. Network/API failures leave the installed program
+usable. `SHELLSTUDIO_NO_UPDATE_CHECK=1` disables the startup check.
 
-Reference: [GitHub Releases API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)
-and [GitHub CLI release creation](https://cli.github.com/manual/gh_release_create).
+References: [GitHub release management](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)
+and [GitHub Releases API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release).
