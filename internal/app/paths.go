@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"shellstudio/internal/diagnostics"
 	"shellstudio/internal/mux"
 	"shellstudio/internal/platform"
 	"shellstudio/internal/store"
@@ -32,6 +33,7 @@ func (a *App) RecordError(err error, context string) {
 	if err == nil {
 		return
 	}
+	diagnostics.Record(diagnostics.Entry{Event: "app-error", Operation: context}, err, time.Time{})
 	l, e := platform.LockWait(filepath.Join(a.Paths.State, "errors.lock"), 2*time.Second)
 	if e != nil {
 		return

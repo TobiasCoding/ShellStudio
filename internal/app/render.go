@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"shellstudio/internal/diagnostics"
 	"shellstudio/internal/mux"
 	"shellstudio/internal/platform"
 	"shellstudio/internal/store"
@@ -58,7 +59,9 @@ func (a *App) ConfigureViews() error {
 
 // Sync renders a view, creating its session if needed. Renders queue behind
 // each other: two shortcuts at once never build the same panes twice.
-func (a *App) Sync(view string) error {
+func (a *App) Sync(view string) (result error) {
+	started := time.Now()
+	defer func() { diagnostics.Record(diagnostics.Entry{Event: "view-sync", Reference: view}, result, started) }()
 	l, e := platform.LockWait(filepath.Join(a.Paths.Runtime, "render.lock"), 10*time.Second)
 	if e != nil {
 		return e
@@ -482,6 +485,7 @@ func (a *App) Open(view, client string) error {
 			env = append(env, kv)
 		}
 	}
+	diagnostics.Record(diagnostics.Entry{Event: "view-attach", Reference: view}, nil, time.Time{})
 	return syscall.Exec(a.Mux.Tmux, []string{"tmux", "-S", a.Mux.Socket(true), "attach-session", "-t", "=" + session}, env)
 }
 

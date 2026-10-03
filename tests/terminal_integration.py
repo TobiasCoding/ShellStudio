@@ -187,6 +187,30 @@ class Integration(unittest.TestCase):
         self.assertEqual(t.output, self.cli("version").strip().encode()+b"\r\n")
         (WORK / "ui-startup.pty").write_bytes(t.capture)
 
+    def test_diagnostic_report_preserves_running_workspace_and_privacy(self):
+        secret = "PRIVATE-DIAGNOSTIC-FIXTURE"
+        folder = self.root / secret
+        folder.mkdir()
+        terminal = self.terminal(str(folder))
+        terminal.expect("F2 Menu")
+        view = json.loads(self.cli("views"))[0]["ID"]
+        console = json.loads(self.cli("launch", "--view", view, "--name", secret))
+        before = self.tmux("programs", "list-panes", "-a", "-F", "#{pane_pid}")
+        terminal.send(("printf '" + secret + "\\n'\n").encode())
+        report_path = self.root / "report.json"
+        self.cli("report", str(report_path))
+        raw = report_path.read_text()
+        report = json.loads(raw)
+        self.assertNotIn(secret, raw)
+        self.assertNotIn(str(self.root), raw)
+        self.assertEqual(report["sections"]["database"]["status"], "ok")
+        self.assertTrue(report["sections"]["views_panes"]["rows"])
+        self.assertTrue(report["sections"]["programs_panes"]["rows"])
+        self.assertTrue(any(entry["event"] == "view-sync" for entry in report["logs"]))
+        self.assertEqual(report_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(before, self.tmux("programs", "list-panes", "-a", "-F", "#{pane_pid}"))
+        self.assertEqual(console["ID"], report["sections"]["consoles"]["rows"][0]["id"])
+
     def test_directory_workspace_with_path_wider_than_terminal(self):
         # Keep sockets under the short test root while making the project path
         # wider than the 100-column PTY, regardless of the checkout location.

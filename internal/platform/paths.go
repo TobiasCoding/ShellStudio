@@ -35,6 +35,24 @@ func PrivateDir(path string) error {
 }
 
 func Discover() (Paths, error) {
+	p, err := Resolve()
+	if err != nil {
+		return p, err
+	}
+	if len(filepath.Join(p.Runtime, "programs.sock")) > 100 {
+		return p, errors.New("runtime path is too long for Unix sockets; use a shorter XDG_RUNTIME_DIR")
+	}
+	for _, d := range []string{p.Config, p.Data, p.State, p.Runtime} {
+		if err = PrivateDir(d); err != nil {
+			return p, err
+		}
+	}
+	return p, nil
+}
+
+// Resolve locates storage without creating directories or changing permissions.
+// Reports use it even when normal application startup cannot open the database.
+func Resolve() (Paths, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Paths{}, err
@@ -67,14 +85,6 @@ func Discover() (Paths, error) {
 			return p, errors.New("XDG_RUNTIME_DIR must be absolute")
 		}
 		p.Runtime = filepath.Join(r, "shellstudio")
-	}
-	for _, d := range []string{p.Config, p.Data, p.State, p.Runtime} {
-		if err = PrivateDir(d); err != nil {
-			return p, err
-		}
-	}
-	if len(filepath.Join(p.Runtime, "programs.sock")) > 100 {
-		return p, errors.New("runtime path is too long for Unix sockets; use a shorter XDG_RUNTIME_DIR")
 	}
 	return p, nil
 }

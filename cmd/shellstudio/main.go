@@ -18,6 +18,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"shellstudio/internal/app"
+	"shellstudio/internal/diagnostics"
 	"shellstudio/internal/extensions"
 	"shellstudio/internal/platform"
 	"shellstudio/internal/runner"
@@ -30,10 +31,31 @@ var version = "dev"
 
 func main() {
 	syscall.Umask(0077)
-	if e := run(os.Args[1:]); e != nil {
+	if e := loggedRun(os.Args[1:]); e != nil {
 		fmt.Fprintln(os.Stderr, "ShellStudio:", e)
 		os.Exit(1)
 	}
+}
+
+func loggedRun(args []string) (err error) {
+	command := diagnostics.Command(args)
+	switch command {
+	case "report", "version", "--version", "help", "--help", "-h", "schema":
+		return run(args)
+	}
+	if e := diagnostics.Start(version); e != nil && !strings.HasPrefix(command, "_") {
+		fmt.Fprintln(os.Stderr, "ShellStudio: diagnostic logging unavailable ("+diagnostics.Classify(e)+").")
+	}
+	started := time.Now()
+	diagnostics.Record(diagnostics.Entry{Event: "command-start", Operation: command}, nil, time.Time{})
+	defer func() {
+		if p := recover(); p != nil {
+			diagnostics.Record(diagnostics.Entry{Event: "panic", Operation: command}, errors.New("panic"), started)
+			panic(p)
+		}
+		diagnostics.Record(diagnostics.Entry{Event: "command-end", Operation: command}, err, started)
+	}()
+	return run(args)
 }
 func printJSON(v any) error {
 	b, e := json.MarshalIndent(v, "", "  ")
@@ -92,6 +114,8 @@ func run(args []string) error {
 	}
 	if len(args) > 0 {
 		switch args[0] {
+		case "report":
+			return diagnosticReport(args[1:])
 		case "update":
 			if len(args) > 2 || (len(args) == 2 && args[1] != "--check") {
 				return errors.New("usage: shellstudio update [--check]")
@@ -272,6 +296,7 @@ func run(args []string) error {
 			return e
 		}
 		a.Close()
+		diagnostics.Record(diagnostics.Entry{Event: "console-exec", Reference: c.ID}, nil, time.Time{})
 		env := map[string]string{"SHELLSTUDIO_CONSOLE": c.ID}
 		for k, v := range c.Env {
 			env[k] = v
@@ -539,6 +564,7 @@ Usage:
   shellstudio extensions [manage]      List extensions, or install/enable/configure them
   shellstudio viewer KIND [DATABASE]   Read-only agent-chat / agent-gantt viewer
   shellstudio doctor                   Check storage, dependencies and extensions
+  shellstudio report [FILE | --stdout] Export a private diagnostic report to share
   shellstudio validate MANIFEST        Validate a file or HTTPS manifest
   shellstudio schema                   Print the public JSON schema
   shellstudio backup DESTINATION       Create and verify a SQLite backup

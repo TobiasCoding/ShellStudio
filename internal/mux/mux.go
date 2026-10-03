@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"shellstudio/internal/diagnostics"
 	"shellstudio/internal/platform"
 	"shellstudio/internal/runner"
 	"shellstudio/internal/store"
@@ -47,7 +48,29 @@ func (m *Mux) Socket(views bool) string {
 	}
 	return filepath.Join(m.Paths.Runtime, n)
 }
-func (m *Mux) run(views bool, args ...string) (string, error) {
+func (m *Mux) run(views bool, args ...string) (output string, result error) {
+	started := time.Now()
+	defer func() {
+		if len(args) == 0 {
+			return
+		}
+		op := args[0]
+		read := strings.HasPrefix(op, "list-") || strings.HasPrefix(op, "show-") || op == "display-message" || op == "has-session"
+		if read && result == nil && time.Since(started) < time.Second {
+			return
+		}
+		server := "programs"
+		if views {
+			server = "views"
+		}
+		count := 1
+		for _, a := range args {
+			if a == ";" {
+				count++
+			}
+		}
+		diagnostics.Record(diagnostics.Entry{Event: "tmux", Operation: op, Server: server, Commands: count}, result, started)
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	c := exec.CommandContext(ctx, m.Tmux, append([]string{"-S", m.Socket(views), "-f", "/dev/null"}, args...)...)

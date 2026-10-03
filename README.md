@@ -173,6 +173,7 @@ Python venvs and include read-only viewers. No private sessions or data migrate.
 
     ssh HOST -t shellstudio
     shellstudio doctor
+    shellstudio report
     shellstudio backup /absolute/path/backup.db
     shellstudio validate examples/htop.json
     make preview
@@ -180,6 +181,9 @@ Python venvs and include read-only viewers. No private sessions or data migrate.
     make publish
 
 `make preview` runs the working code with separate local data and tmux sessions.
+`shellstudio report` exports a private JSON diagnostic file with recent automatic
+logs and the current workspace state. Reproduce the issue and send the file it
+prints; see [diagnostic reports](docs/diagnostics.md) for contents and limits.
 `make check` tests without publishing. After reviewing and committing changes,
 `make publish` tests an isolated candidate, assigns the next patch version and
 pushes its release tag. GitHub publishes the update only after its checks pass.
