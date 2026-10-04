@@ -110,6 +110,16 @@ class Integration(unittest.TestCase):
         self.terms = []
 
     def tearDown(self):
+        result = self._outcome.result
+        if any(test is self for test, _ in result.failures + result.errors):
+            # Preserve the state before teardown stops the synthetic sessions.
+            try:
+                report = subprocess.run([str(BINARY), "report", "--stdout"], env=self.env,
+                                        capture_output=True, text=True, timeout=20)
+                if report.returncode == 0:
+                    (WORK / (self._testMethodName + "-report.json")).write_text(report.stdout)
+            except (OSError, subprocess.TimeoutExpired):
+                pass  # Diagnostics must not prevent cleanup of test sessions.
         for t in self.terms:
             t.close()
         for name in ["views", "programs"]:
