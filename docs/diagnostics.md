@@ -39,6 +39,7 @@ concurrent actions may change state between sections.
   pane sizes and positions, process IDs, exit statuses and connected clients.
 - The latest 1,000 diagnostic events with UTC timestamps, binary version,
   process ID, operation, duration, error category and source call sites.
+  Note-save events include timing and conflict outcomes, never title or body.
 
 Reports exclude terminal output, keystrokes, conversations, notes, view/console
 names, folder paths, command arguments, SSH addresses and environment/config

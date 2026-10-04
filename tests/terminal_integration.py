@@ -316,11 +316,16 @@ class Integration(unittest.TestCase):
         t.expect("Autosave")
         # Dispatch deadlines are checked deterministically in the Go model tests.
         # This checks durable progress while typing, allowing real fsync latency.
-        for _ in range(80):
-            t.send(b"x", 0.05)
         db = self.root / "d/shellstudio/shellstudio.db"
-        with sqlite3.connect(db) as cx:
-            body, revision = cx.execute("select body,revision from notes").fetchone()
+        body, revision = "", 0
+        deadline = time.monotonic() + 10
+        # Keep typing until a committed revision is visible. A fixed four-second
+        # sleep races with fsync on busy disks during isolated release builds.
+        while time.monotonic() < deadline and not body:
+            for _ in range(10):
+                t.send(b"x", 0.05)
+            with sqlite3.connect(db) as cx:
+                body, revision = cx.execute("select body,revision from notes").fetchone()
         self.assertGreater(len(body), 0, "continuous typing never made durable progress")
         self.assertGreater(revision, 1)
         t.output = b""

@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"shellstudio/internal/app"
+	"shellstudio/internal/diagnostics"
 	"shellstudio/internal/explorer"
 	"shellstudio/internal/extensions"
 	"shellstudio/internal/mcp"
@@ -108,6 +109,7 @@ func (m *Model) Init() tea.Cmd {
 }
 func (m *Model) fail(e error) {
 	if e != nil {
+		diagnostics.Record(diagnostics.Entry{Event: "ui-error", Operation: m.Screen}, e, time.Time{})
 		m.Status = "Error: " + e.Error()
 	}
 }
@@ -196,7 +198,14 @@ func (m *Model) startSave() tea.Cmd {
 	n.Body = m.editor.Value()
 	s := m.App.Store
 	return func() tea.Msg {
+		started := time.Now()
+		diagnostics.Record(diagnostics.Entry{Event: "note-save-start", Reference: n.ID}, nil, time.Time{})
 		saved, conflict, e := s.SaveNote(n)
+		operation := "save"
+		if conflict {
+			operation = "conflict-copy"
+		}
+		diagnostics.Record(diagnostics.Entry{Event: "note-save-end", Operation: operation, Reference: n.ID}, e, started)
 		return savedMsg{saved, n.Body, n.Title, conflict, e}
 	}
 }
