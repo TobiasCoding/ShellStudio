@@ -291,7 +291,17 @@ func (a *App) Restart(id string) error {
 // Stop ends the program and keeps the console, which can be restarted.
 func (a *App) Stop(id string) error {
 	a.Store.Event("console-stop", id)
-	return a.Mux.Stop(id)
+	if e := a.Mux.Stop(id); e != nil {
+		return e
+	}
+	// The pane-died notification is asynchronous. Reconcile an explicit stop
+	// before returning so its panel cannot remain a dead nested client while
+	// waiting for a notification that may have raced with a previous respawn.
+	views, e := a.Store.ConsoleViews(id)
+	if e != nil {
+		return e
+	}
+	return a.RefreshOpen(views...)
 }
 
 // Kill ends the program and removes the console from every view. Its panes go

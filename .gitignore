@@ -29,3 +29,4 @@ __pycache__/
 /data/
 /config/
 /.source-files.json
+tests/screenshots/

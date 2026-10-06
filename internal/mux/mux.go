@@ -73,7 +73,10 @@ func (m *Mux) run(views bool, args ...string) (output string, result error) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c := exec.CommandContext(ctx, m.Tmux, append([]string{"-S", m.Socket(views), "-f", "/dev/null"}, args...)...)
+	// Without UTF-8 mode tmux replaces even the tab separators in command
+	// output with underscores under LC_ALL=C. Reconciliation would then see
+	// no existing panes and create another copy of every console.
+	c := exec.CommandContext(ctx, m.Tmux, append([]string{"-u", "-S", m.Socket(views), "-f", "/dev/null"}, args...)...)
 	c.Env = runner.Env(nil)
 	var out, errOut bytes.Buffer
 	c.Stdout, c.Stderr = &out, &errOut
@@ -249,7 +252,7 @@ func (m *Mux) SetName(id, name string) error {
 
 // AttachCommand is the nested client that shows a program inside a view pane.
 func (m *Mux) AttachCommand(id string) string {
-	return "exec " + Join("env", "-u", "TMUX", "-u", "TMUX_PANE", m.Tmux, "-S", m.Socket(false), "attach-session", "-t", "=c-"+id)
+	return "exec " + Join("env", "-u", "TMUX", "-u", "TMUX_PANE", m.Tmux, "-u", "-S", m.Socket(false), "attach-session", "-t", "=c-"+id)
 }
 
 // Self is a shell command running this executable with arguments.

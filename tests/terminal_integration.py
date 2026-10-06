@@ -137,7 +137,7 @@ class Integration(unittest.TestCase):
         return p.stdout
 
     def tmux(self, name, *args):
-        p = subprocess.run(["tmux", "-S", str(self.socket(name)), *args],
+        p = subprocess.run(["tmux", "-u", "-S", str(self.socket(name)), *args],
                            env=self.env, capture_output=True, text=True, timeout=5)
         self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout.strip()
@@ -317,6 +317,104 @@ class Integration(unittest.TestCase):
         probe = subprocess.run(["tmux", "-S", str(self.socket("programs")), "list-sessions"],
                                capture_output=True, timeout=5)
         self.assertNotEqual(probe.returncode, 0, "opening metadata automatically restarted programs")
+
+    def test_reconcile_removes_duplicate_panels_without_restarting_programs(self):
+        view = json.loads(self.cli("new-view", "Main"))
+        consoles = [json.loads(self.cli("launch", "--view", view["ID"], "--name", name))
+                    for name in ("One", "Two", "Three")]
+        t = self.terminal()
+        t.resize(209, 51)
+        t.expect("Three")
+        self.wait_for(lambda: self.tmux("views", "display-message", "-p", "#{window_width}") == "209")
+        session = "=v-" + view["ID"] + ":"
+        original = {p["console"]: p["id"] for p in self.panes() if p["kind"] == "console"}
+        pids = self.tmux("programs", "list-panes", "-a", "-F", "#{pane_id}:#{pane_pid}")
+        # Reproduce the screenshot: several clients for each of three programs
+        # in one view. Metadata remains unique; only presentation is damaged.
+        duplicates = []
+        for console in consoles * 2:
+            source = original[console["ID"]]
+            command = self.tmux("views", "display-message", "-p", "-t", source, "#{pane_start_command}")
+            self.tmux("views", "select-layout", "-t", session, "tiled")
+            duplicate = self.tmux("views", "split-window", "-d", "-P", "-F", "#{pane_id}",
+                                  "-t", session, command)
+            for option in ("@ss_kind", "@ss_console", "@ss_name", "@ss_state"):
+                value = self.tmux("views", "show-option", "-pqv", "-t", source, option)
+                self.tmux("views", "set-option", "-p", "-t", duplicate, option, value)
+            duplicates.append(duplicate)
+        self.tmux("views", "select-pane", "-t", duplicates[-1])
+        self.cli("_view", "layout", "--pane", duplicates[-1], "--layout", "main-horizontal")
+        self.cli("_sync", view["ID"])
+        panels = [p for p in self.panes() if p["kind"] == "console"]
+        self.assertCountEqual([p["console"] for p in panels], [c["ID"] for c in consoles])
+        self.assertEqual(duplicates[-1], self.tmux("views", "display-message", "-p", "-t", session, "#{pane_id}"))
+        self.assert_explorer()
+        # The active program must occupy its pane, not a narrow strip with dots.
+        focused = next(p for p in panels if p["id"] == duplicates[-1])
+        self.wait_for(lambda: self.tmux("programs", "display-message", "-p", "-t",
+                                       "=c-" + focused["console"] + ":", "#{pane_width}") == focused["w"])
+        for _ in range(3):
+            self.cli("_sync", view["ID"])
+        self.assertEqual(panels, [p for p in self.panes() if p["kind"] == "console"])
+        self.assertEqual(pids, self.tmux("programs", "list-panes", "-a", "-F", "#{pane_id}:#{pane_pid}"))
+
+    def test_utf8_headers_with_ssh_c_locale(self):
+        self.env.update(LANG="C", LC_ALL="C")
+        view = json.loads(self.cli("new-view", "Main"))
+        self.cli("launch", "--view", view["ID"], "--name", "café")
+        t = self.terminal()
+        t.expect("café")
+        pids = self.tmux("programs", "list-panes", "-a", "-F", "#{pane_pid}")
+        for _ in range(3):
+            self.cli("_sync", view["ID"])
+        self.assertEqual(len([p for p in self.panes() if p["kind"] == "console"]), 1)
+        self.assertEqual(pids, self.tmux("programs", "list-panes", "-a", "-F", "#{pane_pid}"))
+        report = json.loads(self.cli("report", "--stdout"))
+        for section in ("views_panes", "programs_panes", "views_clients", "programs_clients"):
+            self.assertEqual(report["sections"][section]["status"], "ok", section)
+        for server in ("views", "programs"):
+            flags = self.tmux(server, "list-clients", "-F", "#{client_flags}").splitlines()
+            self.assertTrue(flags)
+            self.assertTrue(all("UTF-8" in f for f in flags), (server, flags))
+        t.expect("▾")
+
+    def test_stale_pane_death_does_not_disconnect_live_console(self):
+        view = json.loads(self.cli("new-view", "Main"))
+        console = json.loads(self.cli("launch", "--view", view["ID"], "--name", "One"))
+        t = self.terminal()
+        t.expect("One")
+        pane = next(p["id"] for p in self.panes() if p["kind"] == "console")
+        pid = self.tmux("views", "display-message", "-p", "-t", pane, "#{pane_pid}")
+        # A queued pane-died hook may run after respawn has already replaced
+        # the old process. It must not kill the new, healthy nested client.
+        self.tmux("views", "set-hook", "-R", "-t", pane, "pane-died")
+        t.pump(0.5)
+        self.assertEqual(pid, self.tmux("views", "display-message", "-p", "-t", pane, "#{pane_pid}"))
+        self.assertNotEqual("1", self.tmux("views", "show-option", "-pqv", "-t", pane, "@ss_disconnected"))
+        # Explicit stop must reconcile even if the asynchronous notification
+        # is missed; only unexpected external exits depend on that hook.
+        self.tmux("views", "set-hook", "-gu", "pane-died")
+        self.cli("stop", console["ID"])
+        t.expect("console is stopped")
+
+    def test_switch_to_existing_view_fits_current_terminal(self):
+        first = json.loads(self.cli("new-view", "Alpha"))
+        self.cli("launch", "--view", first["ID"], "--name", "One")
+        second = json.loads(self.cli("new-view", "Beta"))
+        self.cli("launch", "--view", second["ID"], "--name", "Two")
+        t = self.terminal()
+        t.resize(140, 42)
+        t.expect("One")
+        self.wait_for(lambda: self.tmux("views", "display-message", "-p", "#{window_width}") == "140")
+        client = self.tmux("views", "list-clients", "-F", "#{client_name}")
+        session = "=v-" + second["ID"] + ":"
+        # A view saved on another terminal must resize on switching, even
+        # though SSH has not sent another SIGWINCH to the current client.
+        self.cli("_sync", second["ID"])
+        self.tmux("views", "resize-window", "-t", session, "-x", "80", "-y", "24")
+        self.cli("_view", "previous", "--client", client)
+        self.wait_for(lambda: self.tmux("views", "display-message", "-p", "-t", session,
+                                       "#{window_width}x#{window_height}") == "140x42")
 
     def test_notes_continuous_autosave_and_abrupt_recovery(self):
         t = self.terminal("notes")

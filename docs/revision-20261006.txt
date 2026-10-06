@@ -1,0 +1,68 @@
+Revisión de ShellStudio — 6 de octubre de 2026
+
+La captura tests/screenshots/1.png mostraba una terminal activa estrecha,
+espacio punteado, paneles repetidos y caracteres sustituidos por guiones bajos.
+La inspección de la sesión existente confirmó 10 paneles de consola para sólo
+3 consolas guardadas en esa vista.
+
+Causa reproducida: con LC_ALL=C, los clientes de tmux sin la opción -u
+sustituyen caracteres de su salida, incluidos los tabuladores utilizados
+como separadores. ShellStudio dejaba de reconocer los programas y paneles
+existentes. Las copias de una misma consola forzaban al programa a usar
+el tamaño del panel más pequeño: 18 columnas en la sesión inspeccionada.
+
+Correcciones:
+- UTF-8 explícito en consultas, conexiones, ventanas emergentes e informes.
+- Limpieza de paneles duplicados al reconciliar una vista, conservando el
+  panel enfocado y los programas del servidor independiente.
+- Rechazo de respuestas inválidas y errores de consulta antes de modificar
+  la vista, distinguiéndolos de una sesión que todavía no fue creada.
+- Ajuste al tamaño del cliente al cambiar a una vista ya existente.
+- El aviso pane-died comprueba que el panel siga terminado. Un aviso
+  pendiente después de respawn-pane ya no desconecta al cliente nuevo
+  ni deja una marca que impida mostrar la pantalla de reconexión más tarde.
+- Detener una consola actualiza sus vistas antes de regresar; la pantalla
+  para reiniciarla ya no depende únicamente de una notificación asíncrona.
+
+Se agregaron pruebas con tmux y terminales reales que reproducen los
+duplicados, LC_ALL=C y el cambio entre vistas de tamaños distintos.
+Las pruebas comprueban que los procesos conservan sus PID y que repetir
+la reconciliación no vuelve a crear paneles. También se verifican los
+informes de diagnóstico bajo LC_ALL=C y los errores de lectura de paneles.
+Otra prueba fuerza un aviso pane-died atrasado sobre una consola viva:
+antes de corregirlo cambiaba su PID; ahora lo conserva y permite detener
+la consola normalmente incluso sin recibir la notificación asíncrona.
+
+Validación final: make check terminó con código 0. Incluye pruebas Go,
+detector de carreras, integración MCP sin red, 13 escenarios de terminal,
+go vet, 10 pruebas de instalación, 14 de empaquetado/publicación y revisión
+de publicación sin hallazgos. Las pruebas de publicación usan repositorios
+locales aislados; no se publicó una versión remota.
+
+En corridas previas también se observaron demoras de arranque y un
+SQLITE_BUSY intermitente. No se modificó el almacenamiento; la corrida
+final conjunta terminó sin errores.
+
+Se instaló la compilación local 0.2.4 mediante reemplazo atómico en:
+/home/admin/.local/bin/shellstudio
+Su SHA-256 coincide con el binario validado en bin/shellstudio.
+
+Se reconciliaron las dos vistas existentes. La vista de la captura pasó
+de 10 paneles de consola a los 3 que corresponden: se eliminaron 7 copias.
+La terminal activa pasó de 18 a 176 columnas; las otras dos usan 87 y 88
+columnas. El explorador conserva 32 columnas. La segunda vista conserva
+su consola de 176 columnas.
+
+Los cuatro programas conservaron sus PID y su estado. Se conservaron
+las 2 vistas, 4 consolas y 4 pertenencias de la base de datos.
+PRAGMA quick_check devolvió ok después de la reparación.
+
+La comprobación visual original se basó en la captura suministrada.
+La validación de funcionamiento se hizo en Linux con tmux y terminales
+PTY; no se hizo una sesión manual de Windows Terminal por SSH.
+
+Respaldos locales verificados:
+/opt/ShellStudio/.work/repair-20261006-49E2aM/shellstudio-0.2.3
+/opt/ShellStudio/.work/repair-20261006-49E2aM/shellstudio.db
+
+El cambio previo del usuario en .gitignore se conservó.

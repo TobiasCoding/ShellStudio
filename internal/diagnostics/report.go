@@ -246,7 +246,7 @@ func (r *Report) tmux(dir string) {
 			{"windows", "list-windows", "#{session_name}\t#{window_id}\t#{window_width}\t#{window_height}\t#{window_zoomed_flag}\t#{@ss_layout}\t#{@ss_config}", []string{"session", "window", "width", "height", "zoomed", "layout", "config"}},
 			{"clients", "list-clients", "#{client_pid}\t#{session_name}\t#{client_width}\t#{client_height}\t#{client_utf8}", []string{"pid", "session", "width", "height", "utf8"}},
 		} {
-			args := []string{"-N", "-S", path, "-f", "/dev/null", query.cmd}
+			args := []string{"-u", "-N", "-S", path, "-f", "/dev/null", query.cmd}
 			if query.cmd != "list-clients" {
 				args = append(args, "-a")
 			}

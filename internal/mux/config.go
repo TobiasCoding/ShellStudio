@@ -165,7 +165,7 @@ func itoa(n int) string { return fmt.Sprint(n) }
 // loop opens it as soon as the first one closes.
 func (m *Mux) PopupShell(action, width, height string) string {
 	command := m.Self("_view", action, "--client") + ` "#{client_name}" --pane "#{pane_id}"`
-	popup := Join(m.Tmux, "-S", m.Socket(true), "display-popup", "-c", "#{client_name}", "-E", "-w", width, "-h", height, command)
+	popup := Join(m.Tmux, "-u", "-S", m.Socket(true), "display-popup", "-c", "#{client_name}", "-E", "-w", width, "-h", height, command)
 	marker := Quote(m.Paths.Runtime) + "/next-#{client_pid}"
 	return "f=" + marker + `; rm -f "$f"; ` + popup + `; while [ -s "$f" ]; do c=$(cat "$f"); rm -f "$f"; eval "$c"; done`
 }
@@ -179,7 +179,7 @@ func (m *Mux) PopupLine(client, action string, width, height int, pane string, b
 	if back {
 		args = append(args, "--back")
 	}
-	return Join(m.Tmux, "-S", m.Socket(true), "display-popup", "-c", client, "-E", "-w", itoa(width), "-h", itoa(height), m.Self(args...))
+	return Join(m.Tmux, "-u", "-S", m.Socket(true), "display-popup", "-c", client, "-E", "-w", itoa(width), "-h", itoa(height), m.Self(args...))
 }
 
 // ViewsControls belong to the views server: it contains clients, not programs.
@@ -190,6 +190,7 @@ func (m *Mux) ViewsControls(s Sizes) [][]string {
 	cmds = append(cmds,
 		[]string{"set-hook", "-g", "client-resized", "run-shell -b " + Quote(m.Self("_resize_window", "--client", "#{hook_client}"))},
 		[]string{"set-hook", "-g", "client-attached", "run-shell " + Quote(m.Self("_resize_window", "--client", "#{hook_client}", "--immediate"))},
+		[]string{"set-hook", "-g", "client-session-changed", "run-shell " + Quote(m.Self("_resize_window", "--client", "#{hook_client}", "--immediate"))},
 		[]string{"set-hook", "-gu", "client-detached"},
 		setg("status", "off"), setg("prefix", "C-b"),
 		// The header is inside each pane: the border is only a divider.
@@ -199,7 +200,9 @@ func (m *Mux) ViewsControls(s Sizes) [][]string {
 		// A console whose nested client ended (the program was killed elsewhere
 		// or the programs server restarted) shows its options in the same pane.
 		// Only once: if that screen fails, the pane stays dead, without a loop.
-		[]string{"set-hook", "-g", "pane-died", Script([]string{"if-shell", "-F", "#{&&:" + isConsole + ",#{!=:#{" + Disconnected + "},1}}",
+		// respawn-pane can replace the process before its queued death hook
+		// runs. Never disconnect the replacement if it is already alive.
+		[]string{"set-hook", "-g", "pane-died", Script([]string{"if-shell", "-F", "#{&&:#{pane_dead},#{&&:" + isConsole + ",#{!=:#{" + Disconnected + "},1}}}",
 			Script([]string{"set-option", "-p", Disconnected, "1"}, []string{"respawn-pane", "-k", "exec " + m.Self("_disconnected")})})})
 	for _, d := range []struct{ key, dir string }{{"Left", "L"}, {"Right", "R"}, {"Up", "U"}, {"Down", "D"}} {
 		// Ctrl+Alt: Windows Terminal keeps Ctrl+Shift+Up/Down to scroll its history.

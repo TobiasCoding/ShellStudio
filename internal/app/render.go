@@ -113,17 +113,27 @@ func (a *App) render(view string) error {
 		// A disconnected console counts as dead: it is reconnected.
 		"#{pane_id}\t#{@ss_kind}\t#{@ss_console}\t#{?#{"+mux.Disconnected+"},1,#{pane_dead}}\t"+
 			"#{pane_active}\t#{window_active}\t#{window_id}\t#{@ss_config}\t#{@ss_name}\t#{@ss_state}")
+	// list-panes reports a missing session as either a session or window
+	// target error, depending on the tmux target resolution context.
+	missing := e != nil && (strings.HasPrefix(e.Error(), "can't find session:") || strings.HasPrefix(e.Error(), "can't find window:"))
+	if e != nil && !mux.NoServer(e) && !missing {
+		return fmt.Errorf("read view panels: %w", e)
+	}
 	exists := e == nil
 	explorer, focused, version := "", "", ""
 	explorerDead := false
+	var duplicates []string
 	var order []string
 	panes := map[string]pane{}
 	labels := map[string]string{}
 	stale := map[string]bool{}
 	for _, line := range strings.Split(strings.TrimRight(rows, "\n"), "\n") {
 		f := strings.Split(line, "\t")
-		if !exists || len(f) != 10 {
+		if !exists {
 			continue
+		}
+		if len(f) != 10 {
+			return errors.New("tmux returned invalid panel metadata; the view was not changed")
 		}
 		version = f[7]
 		if f[5] != "1" {
@@ -131,13 +141,29 @@ func (a *App) render(view string) error {
 			// an interrupted render: hidden nested clients that still count.
 			stale[f[6]] = true
 		} else if f[1] == "explorer" {
+			if explorer != "" {
+				if f[4] != "1" {
+					duplicates = append(duplicates, f[0])
+					continue
+				}
+				duplicates = append(duplicates, explorer)
+			}
 			explorer, explorerDead = f[0], f[3] == "1"
 		} else {
 			key := f[2]
 			if f[1] != "console" {
 				key = "empty"
 			}
-			if _, dup := panes[key]; !dup {
+			if previous, dup := panes[key]; dup {
+				// Keep the focused presentation when recovering an older or
+				// interrupted render. Only its redundant client is removed;
+				// the program lives on the separate programs server.
+				if f[4] != "1" {
+					duplicates = append(duplicates, f[0])
+					continue
+				}
+				duplicates = append(duplicates, previous.id)
+			} else {
 				order = append(order, key)
 			}
 			panes[key] = pane{f[0], f[3], f[9]}
@@ -145,6 +171,15 @@ func (a *App) render(view string) error {
 		}
 		if f[4] == "1" && f[5] == "1" {
 			focused = f[0]
+		}
+	}
+	if len(duplicates) > 0 {
+		var kill [][]string
+		for _, p := range duplicates {
+			kill = append(kill, []string{"kill-pane", "-t", p})
+		}
+		if _, e := a.Mux.Batch(true, kill...); e != nil {
+			return e
 		}
 	}
 	if len(stale) > 0 {
@@ -168,7 +203,7 @@ func (a *App) render(view string) error {
 		}
 		return "stopped"
 	}
-	if exists && len(stale) == 0 && version == a.Mux.Version {
+	if exists && len(stale) == 0 && len(duplicates) == 0 && version == a.Mux.Version {
 		wanted := []string{"empty"}
 		if len(members) > 0 {
 			wanted = nil
@@ -486,7 +521,7 @@ func (a *App) Open(view, client string) error {
 		}
 	}
 	diagnostics.Record(diagnostics.Entry{Event: "view-attach", Reference: view}, nil, time.Time{})
-	return syscall.Exec(a.Mux.Tmux, []string{"tmux", "-S", a.Mux.Socket(true), "attach-session", "-t", "=" + session}, env)
+	return syscall.Exec(a.Mux.Tmux, []string{"tmux", "-u", "-S", a.Mux.Socket(true), "attach-session", "-t", "=" + session}, env)
 }
 
 // Focus resolves a client's pane. A navigable popup can lose its pane ID while

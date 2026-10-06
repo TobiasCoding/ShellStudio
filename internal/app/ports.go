@@ -244,7 +244,7 @@ func (a *App) SCPCommand(source, root, directory, client string) (string, error)
 // OpenUploadDialog shows the SCP command in a popup, without blocking the tree.
 func (a *App) OpenUploadDialog(source, view, directory, client string) error {
 	args := []string{"_dialog", "upload", "--source", source, "--view", view, "--target", directory, "--client", client}
-	cmd := []string{a.Mux.Tmux, "-S", a.Mux.Socket(true), "display-popup", "-E", "-c", client, "-w", "85%", "-h", "14", a.Mux.Self(args...)}
+	cmd := []string{a.Mux.Tmux, "-u", "-S", a.Mux.Socket(true), "display-popup", "-E", "-c", client, "-w", "85%", "-h", "14", a.Mux.Self(args...)}
 	return startDetached(cmd)
 }
 
