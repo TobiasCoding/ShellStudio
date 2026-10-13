@@ -196,6 +196,7 @@ func ValidName(name string) error {
 
 // profile resolves the argv of a kind. A detected program that was never
 // enabled is enabled here: choosing it in F3 is that explicit decision.
+// Agents receive their default permission preset.
 func (a *App) profile(kind, profile string) (platform.Profile, error) {
 	if kind == "terminal" {
 		return platform.Profile{Executable: LoginShell(), Args: []string{"-l"}}, nil
@@ -212,7 +213,11 @@ func (a *App) profile(kind, profile string) (platform.Profile, error) {
 			return platform.Profile{}, e
 		}
 	}
-	return a.Extensions.Profile(man, profile)
+	p, e := a.Extensions.Profile(man, profile)
+	if e != nil {
+		return p, e
+	}
+	return a.withPermission(kind, p)
 }
 
 func LoginShell() string {

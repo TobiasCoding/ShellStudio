@@ -254,6 +254,8 @@ func run(args []string) error {
 			return bubbleTea(a, ui.New(a, "extensions"))
 		}
 		return errors.New("usage: shellstudio extensions [manage]")
+	case "permissions":
+		return permissionsCommand(a, args[1:])
 	case "notes":
 		return bubbleTea(a, ui.New(a, "notes"))
 	case "viewer":
@@ -562,6 +564,7 @@ Usage:
   shellstudio update [--check]         Check releases; ask before installing
   shellstudio notes                    Global Notes (also F3 → Notes inside a view)
   shellstudio extensions [manage]      List extensions, or install/enable/configure them
+  shellstudio permissions [AGENT MODE] Default permissions of new Claude/Codex consoles
   shellstudio viewer KIND [DATABASE]   Read-only agent-chat / agent-gantt viewer
   shellstudio doctor                   Check storage, dependencies and extensions
   shellstudio report [FILE | --stdout] Export a private diagnostic report to share
@@ -580,6 +583,7 @@ Inside a view:
   F2 view menu · F3 new console · F5 arrange · F7 views · F9 kill console
   F10 leave (programs keep running) · F4 zoom · F6 / Ctrl+Alt+arrows change panel
   Ctrl+Shift+←/→ or F8 change view · Alt+1–5 layouts · Alt+[ / ] move console
+  F2 → W chooses the permissions new Claude and Codex consoles start with.
   Click a console header for its menu; drag it onto another console to swap them.
   Drag a file from the explorer onto a console to type its path.
 
@@ -588,3 +592,44 @@ Storage follows XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME and XDG_RUNTIME_D
 Set SHELLSTUDIO_NO_UPDATE_CHECK=1 to skip the startup release check.
 ShellStudio is GPL-3.0-only; bundled MCP servers retain their MIT licenses.
 `
+
+// permissionsCommand lists or sets the preset new agent consoles start with.
+func permissionsCommand(a *app.App, args []string) error {
+	switch len(args) {
+	case 0:
+		type mode struct {
+			ID, Label, Detail string
+			Args              []string
+			Selected          bool
+		}
+		out := map[string][]mode{}
+		for _, agent := range app.PermissionAgents {
+			cur, e := a.Permission(agent)
+			if e != nil {
+				return e
+			}
+			for _, p := range app.Permissions(agent) {
+				out[agent] = append(out[agent], mode{p.ID, p.Label, p.Detail, p.Args, p.ID == cur.ID})
+			}
+		}
+		return printJSON(out)
+	case 2:
+		p, e := app.FindPermission(args[0], args[1])
+		if e != nil {
+			return e
+		}
+		if e = a.SetPermission(args[0], p.ID); e != nil {
+			return e
+		}
+		if p.Dangerous {
+			fmt.Fprintln(os.Stderr, "Warning: new "+app.AgentLabel(args[0])+" consoles run without approvals. Use only in an isolated environment.")
+		}
+		shown := "no flags"
+		if len(p.Args) > 0 {
+			shown = strings.Join(p.Args, " ")
+		}
+		fmt.Printf("New %s consoles: %s (%s)\n", app.AgentLabel(args[0]), p.Label, shown)
+		return nil
+	}
+	return errors.New("usage: shellstudio permissions [claude|codex MODE]")
+}

@@ -6,7 +6,9 @@ confirming an installation.
 
 Controls include private per-user XDG directories and sockets, direct argv,
 bounded reads, HTTPS, digests, staging, transactional storage and MCP previews
-with backups. ShellStudio adds no telemetry or agent permission bypasses.
+with backups. ShellStudio adds no telemetry. Agents start with their own
+permission settings unless the user explicitly chooses another default mode
+(F2 → Agent permissions, confirmed for modes without approvals).
 
 Interactive startup contacts GitHub's public releases API to check the version.
 It sends no workspace paths, notes, profiles or credentials. Set

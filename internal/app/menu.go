@@ -24,6 +24,9 @@ var (
 	BrowseHelp = []string{"Enter  Open", "E  Consoles of the view", "N  New view", "Del  Delete view", "Q / Esc  Back"}
 	NewHelp    = []string{"Enter  Create", "Q / Esc  Cancel"}
 	AddHelp    = []string{"Enter  Add", "Q / Esc  Back"}
+	// Settings that apply to the whole application, not to this view.
+	PermissionsHelp    = []string{"Enter  Change", "Q / Esc  Back", "Applies to consoles created afterwards."}
+	PermissionModeHelp = []string{"Enter  Use for new consoles", "Q / Esc  Back"}
 )
 
 // Rows of the view menu above and below the categories.
@@ -64,6 +67,7 @@ func (a *App) MenuColumns(v store.View) []MenuColumn {
 		{"LAYOUT", layouts},
 		{"VIEWS", []MenuItem{{"V", "New view…", "new-view"}, {"B", "Other views…", "views"}}},
 		{"MORE", []MenuItem{{"E", "Explorer: " + explorer, "explorer"}, {"P", "Forward ports…", "ports"},
+			{"W", "Agent permissions…", "permissions"},
 			{"D", "Leave without stopping (F10)", "leave"}, {"Q", "Back (Esc)", "back"}}},
 	}
 }
@@ -137,6 +141,28 @@ func ChooseSize(title string, items, help []string) (int, int) {
 	return max(40, w+2) + 2, max(1, len(items)) + len(help) + 7
 }
 
+// PermissionItems shows the current choice of every agent.
+func (a *App) PermissionItems() []string {
+	var out []string
+	for _, id := range PermissionAgents {
+		label := AgentLabel(id) + " | "
+		if p, e := a.Permission(id); e != nil {
+			label += "invalid: " + e.Error()
+		} else {
+			label += p.Label
+		}
+		out = append(out, label)
+	}
+	return out
+}
+func PermissionModeItems(agent string) []string {
+	var out []string
+	for _, p := range Permissions(agent) {
+		out = append(out, p.Label+" — "+p.Detail)
+	}
+	return out
+}
+
 func (a *App) kindLabels() []string {
 	var out []string
 	for _, k := range a.Kinds() {
@@ -198,6 +224,13 @@ func (a *App) DialogSize(action, view string) (int, int) {
 		return ChooseSize("SAVED VIEWS", items, BrowseHelp)
 	case "ports":
 		return PortsSize(len(ListeningPorts()))
+	case "permissions":
+		w, h := ChooseSize("AGENT PERMISSIONS", a.PermissionItems(), PermissionsHelp)
+		for _, id := range PermissionAgents {
+			mw, mh := ChooseSize(strings.ToUpper(AgentLabel(id))+" PERMISSIONS", PermissionModeItems(id), PermissionModeHelp)
+			w, h = max(w, mw), max(h, mh)
+		}
+		return w, h
 	}
 	return 64, 12
 }

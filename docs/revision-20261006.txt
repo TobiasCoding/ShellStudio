@@ -44,7 +44,7 @@ SQLITE_BUSY intermitente. No se modificó el almacenamiento; la corrida
 final conjunta terminó sin errores.
 
 Se instaló la compilación local 0.2.4 mediante reemplazo atómico en:
-/home/admin/.local/bin/shellstudio
+~/.local/bin/shellstudio
 Su SHA-256 coincide con el binario validado en bin/shellstudio.
 
 Se reconciliaron las dos vistas existentes. La vista de la captura pasó

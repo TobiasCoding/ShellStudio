@@ -91,6 +91,9 @@ func runView(s *Screen, a *app.App, action, client, pane string) (string, error)
 	case "ports":
 		Ports(s, a, client)
 		return "", nil
+	case "permissions":
+		AgentPermissions(s, a)
+		return "", nil
 	case "new":
 		f, e := focus()
 		if e != nil {
@@ -331,8 +334,49 @@ func menuAction(s *Screen, a *app.App, v store.View, focused, client, pane, acti
 		r = Browse(s, a)
 	case "ports":
 		Ports(s, a, "")
+	case "permissions":
+		AgentPermissions(s, a)
 	}
 	return r, r == "", nil
+}
+
+// AgentPermissions chooses the permissions that new Claude and Codex consoles
+// start with. Modes without approvals need a second confirmation.
+func AgentPermissions(s *Screen, a *app.App) {
+	sel, message := 0, ""
+	for {
+		key, i := Choose(s, "AGENT PERMISSIONS", a.PermissionItems(), sel, message, app.PermissionsHelp)
+		if key != "enter" || i >= len(app.PermissionAgents) {
+			return
+		}
+		sel, message = i, ""
+		agent := app.PermissionAgents[i]
+		label := app.AgentLabel(agent)
+		modes := app.Permissions(agent)
+		at := 0
+		if cur, e := a.Permission(agent); e == nil {
+			for j, p := range modes {
+				if p.ID == cur.ID {
+					at = j
+				}
+			}
+		}
+		k, j := Choose(s, strings.ToUpper(label)+" PERMISSIONS", app.PermissionModeItems(agent), at, "", app.PermissionModeHelp)
+		if k != "enter" || j >= len(modes) {
+			continue
+		}
+		p := modes[j]
+		if p.Dangerous && !Confirm(s, "Start new "+label+" consoles with "+p.Label+"?",
+			p.Detail+" The agent can change or delete any file your user can reach. Use it only in an isolated environment.") {
+			continue
+		}
+		if e := a.SetPermission(agent, p.ID); e != nil {
+			a.RecordError(e, "Agent permissions")
+			message = e.Error()
+			continue
+		}
+		message = label + ": " + p.Label + " for new consoles"
+	}
 }
 
 func newViewPrompts(s *Screen, a *app.App, folder string) (string, bool, error) {

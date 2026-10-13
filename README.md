@@ -106,7 +106,7 @@ the same dialogs as the keyboard:
 
 | Key | Action |
 | --- | --- |
-| F2 | View menu: consoles, layouts, views, explorer and ports |
+| F2 | View menu: consoles, layouts, views, explorer, ports and agent permissions |
 | F3 | Create a console; choose its kind and editable name |
 | F5 | Arrange all consoles, or create a view from a marked subset |
 | F7 | Browse, create or delete saved views |
@@ -164,7 +164,7 @@ available, even if the programs are absent.
   Missing clients produce pending registration; return to m after installation.
 
 Installation is per-user, version pinned, integrity checked and verified before
-activation. No automatic extension updates or permission-bypass flags. Disabling does not
+activation. No automatic extension updates. Disabling does not
 stop programs. Uninstall retains immutable packages for active consoles; see
 [storage](docs/storage.md) for reclamation. The MCPs install offline into separate
 Python venvs and include read-only viewers. No private sessions or data migrate.
@@ -188,6 +188,28 @@ prints; see [diagnostic reports](docs/diagnostics.md) for contents and limits.
 `make publish` tests an isolated candidate, assigns the next patch version and
 pushes its release tag. GitHub publishes the update only after its checks pass.
 See [the development and release workflow](docs/releasing.md).
+
+## Agent permissions
+
+F2 → W (Agent permissions) is a global setting: it chooses the permission mode
+that new Claude and Codex consoles start with, in every view. It is stored as
+`agent_permissions` in `config.json`. Equivalent command line:
+
+    shellstudio permissions                  # list modes and the current choice
+    shellstudio permissions claude acceptEdits
+    shellstudio permissions codex workspace-write
+
+| Agent | Modes (flags added at launch) |
+| --- | --- |
+| Claude | `default` (none), `plan`, `acceptEdits`, `auto`, `dontAsk`, `bypassPermissions` (`--permission-mode MODE`) |
+| Codex | `default` (none), `read-only`, `workspace-write` (`--sandbox … --ask-for-approval on-request`), `workspace-never-ask` (`--ask-for-approval never`), `full-access` (`--dangerously-bypass-approvals-and-sandbox`) |
+
+`default` adds nothing, so the agent's own configuration decides; it is the
+initial value. Modes without approvals (`bypassPermissions`, `full-access`) ask
+for confirmation in the dialog. The setting applies to consoles created or
+replaced afterwards; running consoles and restarts keep their original
+arguments. A profile configured with its own permission flags (extension
+manager → c) keeps them. An unknown stored mode blocks the launch with an error.
 
 F2 → Forward ports opens the SSH forwarding dialog. Dropping a Windows path in
 the explorer opens an SCP upload dialog. OSC 52 clipboard copying needs support

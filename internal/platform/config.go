@@ -22,6 +22,9 @@ type Config struct {
 	Version    int                        `json:"version"`
 	Extensions map[string]ExtensionConfig `json:"extensions"`
 	Recent     []string                   `json:"recent_folders"`
+	// AgentPermissions names the launch preset of each agent; absent is the
+	// agent's own default.
+	AgentPermissions map[string]string `json:"agent_permissions,omitempty"`
 }
 
 func LoadConfig(dir string) (Config, error) {

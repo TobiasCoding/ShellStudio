@@ -9,7 +9,7 @@ func reservedCommand(name string) bool {
 		return true
 	}
 	switch name {
-	case "update", "version", "help", "schema", "validate", "doctor", "report", "backup", "views", "consoles", "new-view", "launch", "restart", "stop", "kill", "extensions", "notes", "viewer":
+	case "update", "version", "help", "schema", "validate", "doctor", "report", "backup", "views", "consoles", "new-view", "launch", "restart", "stop", "kill", "extensions", "notes", "viewer", "permissions":
 		return true
 	}
 	return false
