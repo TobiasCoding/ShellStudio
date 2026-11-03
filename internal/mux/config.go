@@ -77,6 +77,11 @@ func commonOptions() [][]string {
 		setg("remain-on-exit", "on"), setg("history-limit", "10000"), setg("mouse", "on"),
 		{"unbind-key", "-q", "-n", "MouseDrag1Border"},
 		setg("set-clipboard", "on"),
+		// Mosh 1.4 drops OSC 52 with an empty selection. Default it to the
+		// clipboard (c), preserving explicit selections such as primary (p).
+		// These private servers reapply controls on every sync: use a fixed
+		// slot after tmux's defaults instead of appending duplicate overrides.
+		{"set-option", "-s", "terminal-overrides[1]", `*:Ms=\E]52;%?%p1%l%t%p1%s%ec%;;%p2%s\007`},
 		setg("window-style", "fg=white,"+black), setg("window-active-style", "fg=white,"+black),
 		setg("status-style", "fg=white,"+black), setg("pane-border-style", "fg=colour240,"+black),
 		setg("pane-active-border-style", "fg=cyan,"+black), setg("message-style", "fg=white,"+black),
@@ -100,21 +105,19 @@ func commonOptions() [][]string {
 func (m *Mux) RunAction(arguments string) string {
 	return "run-shell -b " + Quote(m.Self("_action")+" "+arguments)
 }
-func (m *Mux) killPrompt(name, arguments string) string {
-	return "confirm-before -y -p " + Quote("Kill "+name+"? Enter confirms, Esc cancels ") + " " + Quote(m.RunAction(arguments))
-}
 
 // Options of a finished console, in its own pane (programs server).
 func (m *Mux) deadMenu(position string) []string {
-	rename := `command-prompt -I "#{@ss_name}" -p "New name:" ` + Quote(`set-option @ss_rename "%%%" ; `+
-		m.RunAction("rename --session #{session_name}"))
+	dialog := func(action string) string {
+		return "run-shell -b " + Quote(m.Self("_dialog", action)+` --tty "#{client_tty}"`)
+	}
 	return []string{"display-menu", "-O", "-T", "#[align=centre] #{@ss_name} finished ",
 		"-x", position, "-y", position,
 		"Restart", "r", "respawn-pane -k",
-		"Rename", "n", rename,
+		"Rename", "n", dialog("rename"),
 		"",
 		"Close panel (the console stays in the list)", "q", m.RunAction("remove --tty #{client_tty}"),
-		"Kill console", "m", m.killPrompt("#{@ss_name}", "kill --session #{session_name}")}
+		"Kill console", "m", dialog("kill")}
 }
 
 // ProgramsControls belong to the programs server: header and finished consoles.
@@ -165,7 +168,7 @@ func itoa(n int) string { return fmt.Sprint(n) }
 // loop opens it as soon as the first one closes.
 func (m *Mux) PopupShell(action, width, height string) string {
 	command := m.Self("_view", action, "--client") + ` "#{client_name}" --pane "#{pane_id}"`
-	popup := Join(m.Tmux, "-u", "-S", m.Socket(true), "display-popup", "-c", "#{client_name}", "-E", "-w", width, "-h", height, command)
+	popup := Join(m.Tmux, "-u", "-S", m.Socket(true), "display-popup", "-c", "#{client_name}", "-E", "-x", "C", "-y", "C", "-w", width, "-h", height, command)
 	marker := Quote(m.Paths.Runtime) + "/next-#{client_pid}"
 	return "f=" + marker + `; rm -f "$f"; ` + popup + `; while [ -s "$f" ]; do c=$(cat "$f"); rm -f "$f"; eval "$c"; done`
 }
@@ -179,7 +182,7 @@ func (m *Mux) PopupLine(client, action string, width, height int, pane string, b
 	if back {
 		args = append(args, "--back")
 	}
-	return Join(m.Tmux, "-u", "-S", m.Socket(true), "display-popup", "-c", client, "-E", "-w", itoa(width), "-h", itoa(height), m.Self(args...))
+	return Join(m.Tmux, "-u", "-S", m.Socket(true), "display-popup", "-c", client, "-E", "-x", "C", "-y", "C", "-w", itoa(width), "-h", itoa(height), m.Self(args...))
 }
 
 // ViewsControls belong to the views server: it contains clients, not programs.
@@ -209,6 +212,9 @@ func (m *Mux) ViewsControls(s Sizes) [][]string {
 		cmds = append(cmds, []string{"bind-key", "-n", "C-M-" + d.key, "select-pane", "-" + d.dir})
 	}
 	cmds = append(cmds, []string{"unbind-key", "-q", "-n", "C-S-Up"}, []string{"unbind-key", "-q", "-n", "C-S-Down"},
+		// A finished program's Enter menu runs in the nested client. Remember
+		// which outer client requested it so its dialogs return to that user.
+		[]string{"bind-key", "-n", "Enter", Script([]string{"set-option", "-pF", "@ss_client", "#{client_name}"}, []string{"send-keys", "Enter"})},
 		[]string{"bind-key", "-n", "F6", "select-pane", "-t", ":.+"},
 		[]string{"bind-key", "-n", "S-F6", "select-pane", "-t", ":.-"},
 		[]string{"bind-key", "-n", "F4", "resize-pane", "-Z"},
@@ -236,6 +242,7 @@ func (m *Mux) ViewsControls(s Sizes) [][]string {
 		popups[b.region] = "run-shell " + Quote(popup)
 	}
 	popups["replace"] = "run-shell " + Quote(m.PopupShell("replace", sizes["new"][0], sizes["new"][1]))
+	popups["rename"] = "run-shell " + Quote(m.PopupShell("rename", Fit("64", w), Fit("12", h)))
 	// Ports are counted when opening: the program measures their popup.
 	popups["ports"] = "run-shell " + Quote(m.Self("_dialog", "ports", "--client")+` "#{client_name}" --pane "#{pane_id}"`)
 	cmds = append(cmds, setg("@ss_views", itoa(s.Views)), []string{"unbind-key", "-q", "-n", "MouseDown1Status"})
@@ -269,11 +276,9 @@ func (m *Mux) headerMenus(popups map[string]string) [][]string {
 	viewAction := func(action string) string {
 		return "run-shell -b " + Quote(m.Self("_view", action)+` --client "#{client_name}" --pane "#{pane_id}"`)
 	}
-	rename := `command-prompt -I "#{@ss_name}" -p "New name:" ` + Quote(`set-option -p @ss_rename "%%%" ; `+
-		m.RunAction(`rename --client "#{client_name}"`))
 	head := []string{"display-menu", "-O", "-T", "#[align=centre] #{@ss_name} ", "-t", "=", "-x", "M", "-y", "M"}
 	console := append(append([]string{}, head...),
-		"Rename", "n", rename,
+		"Rename", "n", popups["rename"],
 		"#{?window_zoomed_flag,Restore the layout,Zoom} (F4)", "z", "resize-pane -Z",
 		"Move before (Alt+[)", "[", viewAction("move-before"),
 		"Move after (Alt+])", "]", viewAction("move-after"),
@@ -282,7 +287,7 @@ func (m *Mux) headerMenus(popups map[string]string) [][]string {
 		"Kill and replace here", "r", popups["replace"],
 		"Forward ports to your PC", "p", popups["ports"],
 		"Close panel (the console keeps running)", "q", m.RunAction("remove --pane #{pane_id}"),
-		"Kill console (F9)", "m", m.killPrompt("#{@ss_name}", "kill --pane #{pane_id}"),
+		"Kill console (F9)", "m", popups["kill"],
 		"",
 		"View menu (F2)", "v", popups["menu"])
 	tree := append(append([]string{}, head...),
@@ -314,46 +319,20 @@ func (m *Mux) deadPanelMenu() string {
 }
 
 func (m *Mux) dragBindings() [][]string {
-	drop := m.Self("_view", "drop") + ` --origin "#{` + dragPane + `}" --target "#{pane_id}"`
-	move := m.Self("_action", "move") + ` --pane "#{` + dragPane + `}" --target "#{pane_id}"`
+	drop := m.Self("_view", "drop") + ` --origin "#{` + dragPane + `}" --target "#{pane_id}" --client "#{client_name}"`
+	move := m.Self("_action", "move") + ` --pane "#{` + dragPane + `}" --target "#{pane_id}" --client "#{client_name}"`
 	ontoOtherConsole := "#{&&:" + dragIs("console") + ",#{&&:" + isConsole + ",#{!=:#{pane_id},#{" + dragPane + "}}}}"
 	// Capture both IDs before any movement. The action stores the order and
 	// swaps native panes under the render lock, preserving hand-adjusted sizes.
 	swap := Script([]string{"run-shell", "-b", move})
-	resize := m.Self("_resize")
-	resizeClient := ` --client "#{client_name}" --id "#{client_pid}"`
-	resizePoint := ` --pane "#{pane_id}" --x "#{mouse_x}" --y "#{mouse_y}" --left "#{pane_left}" --top "#{pane_top}"`
-	begin := resize + " start" + resizeClient + ` --pane "#{pane_id}"`
-	first := resize + " orient" + resizeClient + resizePoint
-	end := resize + " end" + resizeClient + resizePoint
-	cancel := resize + " cancel" + resizeClient
-	lastPoint := `set-option -g @ss_resize_point_#{client_pid} "#{pane_left},#{pane_top},#{mouse_x},#{mouse_y}"`
+	// tmux owns the original mouse position, divider and drag lifecycle.
+	// Border formats omit mouse_x/mouse_y; inferring the axis from a later
+	// pane event chooses the wrong edge at junctions and on short rows.
 	var resizeBindings [][]string
 	for _, key := range []string{"MouseDown1Border", "SecondClick1Border", "TripleClick1Border"} {
-		parts := [][]string{{"run-shell", begin}, {"switch-client", "-T", "ss-resize-start"}}
-		if key == "MouseDown1Border" {
-			parts = append([][]string{dragReset}, parts...)
-		}
-		resizeBindings = append(resizeBindings, []string{"bind-key", "-n", key, Script(parts...)})
+		resizeBindings = append(resizeBindings, []string{"bind-key", "-n", key, Script(dragReset)})
 	}
-	for _, where := range []string{"Border", "Pane", "Status"} {
-		var remember [][]string
-		if where == "Pane" {
-			remember = [][]string{{"run-shell", "-C", lastPoint}}
-		}
-		resizeBindings = append(resizeBindings,
-			[]string{"bind-key", "-T", "ss-resize-start", "MouseDrag1" + where,
-				Script(append(append([][]string{}, remember...), []string{"run-shell", first}, []string{"switch-client", "-T", "ss-resize-active"})...)},
-			[]string{"bind-key", "-T", "ss-resize-active", "MouseDrag1" + where,
-				Script(append(append([][]string{}, remember...), []string{"display-message", "-d", "500", "Release to apply the size"},
-					[]string{"switch-client", "-T", "ss-resize-active"})...)},
-			[]string{"bind-key", "-T", "ss-resize-start", "MouseDragEnd1" + where, "run-shell", cancel},
-			[]string{"bind-key", "-T", "ss-resize-active", "MouseDragEnd1" + where, "run-shell", end},
-			[]string{"bind-key", "-T", "ss-resize-start", "MouseUp1" + where, "run-shell", cancel})
-	}
-	for _, table := range []string{"ss-resize-start", "ss-resize-active"} {
-		resizeBindings = append(resizeBindings, []string{"bind-key", "-T", table, "Escape", "run-shell", cancel})
-	}
+	resizeBindings = append(resizeBindings, []string{"bind-key", "-n", "MouseDrag1Border", "resize-pane", "-M"})
 	selectPane := []string{"select-pane", "-t", "="}
 	out := [][]string{
 		{"bind-key", "-n", "MouseDown1Pane", "if-shell", "-F", "#{pane_dead}",
@@ -373,7 +352,7 @@ func (m *Mux) dragBindings() [][]string {
 		// Pressing and releasing the header without moving: its menu.
 		{"bind-key", "-n", "MouseUp1Pane", "if-shell", "-F", "#{&&:" + dragging + ",#{!=:#{" + dragKind + "},path}}",
 			Script(dragReset, []string{"if-shell", "-F", "#{&&:" + onHeader + ",#{==:#{pane_id},#{" + dragPane + "}}}", headerMenu}),
-			"send-keys -M"},
+			Script(dragReset, []string{"send-keys", "-M"})},
 		{"bind-key", "-n", "MouseDown3Pane", "if-shell", "-F", onHeader,
 			Script(selectPane, dragReset) + " ; " + headerMenu,
 			Script(selectPane, []string{"send-keys", "-M"})},
@@ -393,6 +372,7 @@ func (m *Mux) dragBindings() [][]string {
 	}
 	// Dropping on a divider or the status line types nothing.
 	for _, where := range []string{"Border", "Status"} {
+		out = append(out, []string{"bind-key", "-n", "MouseUp1" + where, Script(dragReset)})
 		out = append(out, []string{"bind-key", "-n", "MouseDragEnd1" + where, "if-shell", "-F", dragging,
 			Script([]string{"if-shell", "-F", dragIs("path"), Script([]string{"run-shell", m.Self("_view", "drop") + ` --origin "#{` + dragPane + `}"`})}, dragReset)})
 	}
@@ -400,10 +380,11 @@ func (m *Mux) dragBindings() [][]string {
 	// the explorer: there a double click opens the file, and the default
 	// select-pane would steal the focus from the new console.
 	for _, k := range []struct{ key, selection string }{{"DoubleClick1Pane", "select-word"}, {"TripleClick1Pane", "select-line"}} {
-		out = append(out, []string{"bind-key", "-n", k.key, "if-shell", "-F", "#{!=:#{@ss_kind},explorer}",
-			Script(selectPane, []string{"if-shell", "-F", "#{||:#{pane_in_mode},#{mouse_any_flag}}", "send-keys -M",
-				Script([]string{"copy-mode", "-H"}, []string{"send-keys", "-X", k.selection}, []string{"run-shell", "-d", "0.3"},
-					[]string{"send-keys", "-X", "copy-pipe-and-cancel"})})})
+		out = append(out, []string{"bind-key", "-n", k.key, "if-shell", "-F", onHeader,
+			Script(dragReset), Script(dragReset, []string{"if-shell", "-F", "#{!=:#{@ss_kind},explorer}",
+				Script(selectPane, []string{"if-shell", "-F", "#{||:#{pane_in_mode},#{mouse_any_flag}}", "send-keys -M",
+					Script([]string{"copy-mode", "-H"}, []string{"send-keys", "-X", k.selection}, []string{"run-shell", "-d", "0.3"},
+						[]string{"send-keys", "-X", "copy-pipe-and-cancel"})})})})
 	}
 	return append(out, resizeBindings...)
 }

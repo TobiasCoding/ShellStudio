@@ -23,9 +23,13 @@ func RunView(a *app.App, action, client, pane string, back bool) error {
 		return e
 	}
 	result, err := runView(s, a, action, client, pane)
+	if err != nil {
+		a.RecordError(err, "Dialog")
+		Message(s, "ACTION COULD NOT BE COMPLETED", err.Error())
+	}
 	s.Close()
 	if err != nil {
-		return err
+		return nil
 	}
 	if result == "" && back && client != "" {
 		return a.Chain(client, "menu", pane, false)
@@ -80,6 +84,8 @@ func runView(s *Screen, a *app.App, action, client, pane string) (string, error)
 		return EditView(s, a, f.View, f.Console), nil
 	case "kill":
 		return KillFocused(s, a, client, pane)
+	case "rename":
+		return RenameFocused(s, a, client, pane)
 	case "replace":
 		return ReplaceFocused(s, a, client, pane)
 	case "arrange":
@@ -466,6 +472,26 @@ func ReplaceFocused(s *Screen, a *app.App, client, pane string) (string, error) 
 	}
 	a.FocusConsole(f.View, c.ID)
 	return f.View, nil
+}
+
+// RenameFocused keeps the console identity even if another client changes focus.
+func RenameFocused(s *Screen, a *app.App, client, pane string) (string, error) {
+	f, e := a.Focus(client, pane, false)
+	if e != nil || f.Console == "" {
+		return "", e
+	}
+	detail := "Enter keeps the name; type to replace it."
+	for {
+		name, ok := Prompt(s, "RENAME CONSOLE", detail, "", 80, f.Name)
+		if !ok {
+			return "", nil
+		}
+		if e := app.ValidName(name); e != nil {
+			detail = e.Error()
+			continue
+		}
+		return "", a.Rename(f.Console, name)
+	}
 }
 
 // KillFocused is F9 / Ctrl+Shift+Del. The identity is frozen before
@@ -1057,9 +1083,8 @@ func Disconnected(a *app.App) error {
 			a.Detached("_action", "remove", "--pane", pane)
 			message = "Closing…"
 		case (key == "m" || key == "M" || key == "delete") && exists:
-			if Confirm(s, "KILL CONSOLE", f.Name+" — ends the process and removes it from every view") {
-				a.Detached("_action", "kill", "--pane", pane)
-				message = "Ending…"
+			if e := a.Detached("_dialog", "kill", "--pane", pane); e != nil {
+				message = e.Error()
 			}
 		}
 	}

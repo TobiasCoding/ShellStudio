@@ -313,12 +313,48 @@ func internal(a *app.App, args []string) error {
 	report := func(context string, e error) error {
 		if e != nil {
 			a.RecordError(e, context)
-			// From run-shell -b errors go to the status line, not to a pane.
-			a.Mux.Run(true, "display-message", "-d", "4000", e.Error())
+			// Never display an asynchronous error on an unrelated client.
+			client, pane, tty := "", "", ""
+			for i := 1; i+1 < len(args); i++ {
+				switch args[i] {
+				case "--client":
+					client = args[i+1]
+				case "--pane", "--origin":
+					pane = args[i+1]
+				case "--tty":
+					tty = args[i+1]
+				}
+			}
+			if pane == "" && tty != "" {
+				pane, _ = a.PaneByTTY(tty)
+			}
+			if client == "" && pane != "" {
+				client, _ = a.ClientForPane(pane)
+			}
+			a.ShowError(client, context, e.Error())
 		}
 		return nil
 	}
 	switch args[0] {
+	case "_message":
+		if len(args) != 2 {
+			return errors.New("usage: _message FILE")
+		}
+		b, e := os.ReadFile(args[1])
+		if e != nil {
+			return e
+		}
+		var message struct{ Title, Detail string }
+		if e = json.Unmarshal(b, &message); e != nil {
+			return e
+		}
+		s, e := tui.Open(false)
+		if e != nil {
+			return e
+		}
+		defer s.Close()
+		tui.Message(s, message.Title, message.Detail)
+		return nil
 	case "_empty":
 		return tui.Empty()
 	case "_disconnected":
@@ -379,14 +415,27 @@ func internal(a *app.App, args []string) error {
 		if len(args) < 2 {
 			return errors.New("usage: _dialog ports|upload")
 		}
-		v, _, _, e := flags("_dialog", args[2:], "client", "pane", "source", "view", "target")
+		v, _, _, e := flags("_dialog", args[2:], "client", "pane", "source", "view", "target", "tty")
 		if e != nil {
 			return e
 		}
 		if args[1] == "upload" {
 			return report("Upload from the PC", tui.Upload(a, *v["source"], *v["view"], *v["target"], *v["client"]))
 		}
-		return report("Forward ports", a.OpenDialog("ports", *v["client"], *v["pane"]))
+		client, pane := *v["client"], *v["pane"]
+		if *v["tty"] != "" {
+			pane, e = a.PaneByTTY(*v["tty"])
+			if e != nil {
+				return report("Dialog", e)
+			}
+		}
+		if client == "" {
+			client, e = a.ClientForPane(pane)
+			if e != nil {
+				return report("Dialog", e)
+			}
+		}
+		return report("Dialog", a.OpenDialog(args[1], client, pane))
 	case "_action":
 		if len(args) < 2 {
 			return errors.New("usage: _action ACTION")
@@ -396,16 +445,6 @@ func internal(a *app.App, args []string) error {
 			return e
 		}
 		return report("Panel action", paneAction(a, args[1], *v["pane"], *v["client"], *v["session"], *v["tty"], *v["target"]))
-	case "_resize":
-		if len(args) < 2 {
-			return nil
-		}
-		v, _, _, e := flags("_resize", args[2:], "client", "id", "pane", "x", "y", "left", "top")
-		if e != nil {
-			return nil
-		}
-		a.Resize(args[1], *v["client"], *v["id"], *v["pane"], *v["x"], *v["y"], *v["left"], *v["top"])
-		return nil
 	case "_resize_window":
 		v, sw, _, e := flags("_resize_window", args[1:], "client", "worker", "!immediate")
 		if e != nil {
@@ -418,7 +457,7 @@ func internal(a *app.App, args []string) error {
 }
 
 // paneAction is what the header menus and finished consoles choose. It runs
-// from run-shell -b: errors go to the status line.
+// from run-shell -b: errors open a dialog in the initiating client.
 func paneAction(a *app.App, action, pane, client, session, tty, target string) error {
 	var e error
 	if tty != "" {
@@ -429,7 +468,7 @@ func paneAction(a *app.App, action, pane, client, session, tty, target string) e
 	var f app.Focus
 	switch {
 	case client != "":
-		if f, e = a.Focus(client, "", false); e != nil {
+		if f, e = a.Focus(client, pane, false); e != nil {
 			return e
 		}
 		pane = f.Pane

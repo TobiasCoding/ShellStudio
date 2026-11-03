@@ -216,11 +216,22 @@ func (a *App) render(view string) error {
 			cols, applied, _ := strings.Cut(strings.TrimRight(info, "\n"), "\t")
 			width, _ := strconv.Atoi(cols)
 			same := strings.Join(order, " ") == strings.Join(wanted, " ")
+			var rename [][]string
 			for _, c := range members {
 				p := panes[c.ID]
-				same = same && p.dead != "1" && labels[c.ID] == c.Name && p.state == state(c.ID)
+				same = same && p.dead != "1" && p.state == state(c.ID)
+				if labels[c.ID] != c.Name {
+					rename = append(rename, []string{"set-option", "-p", "-t", p.id, "@ss_name", c.Name},
+						[]string{"select-pane", "-t", p.id, "-T", c.Name})
+				}
 			}
 			if same && (explorer != "") == (v.Explorer && width >= 70) && !explorerDead && applied == v.Layout {
+				// Labels do not change geometry. Rebuilding here discarded manual
+				// divider sizes whenever a console was renamed in any view.
+				if len(rename) > 0 {
+					_, e = a.Mux.Batch(true, rename...)
+					return e
+				}
 				return nil
 			}
 		}
@@ -623,6 +634,28 @@ func (a *App) PaneByTTY(tty string) (string, error) {
 		}
 	}
 	return "", errors.New("this console is not inside a view")
+}
+
+// ClientForPane routes dialogs from a nested console to its enclosing view.
+func (a *App) ClientForPane(pane string) (string, error) {
+	f, e := a.PaneOwner(pane)
+	if e != nil {
+		return "", e
+	}
+	o, e := a.Mux.Run(true, "list-clients", "-t", "="+mux.ViewSession(f.View), "-F", "#{client_name}")
+	if e != nil {
+		return "", e
+	}
+	clients := strings.Fields(o)
+	if len(clients) == 0 {
+		return "", errors.New("this view has no connected client")
+	}
+	// Mouse interaction records the originating outer client on the pane.
+	last, _ := a.Mux.Run(true, "show-option", "-pqv", "-t", pane, "@ss_client")
+	if contains(clients, strings.TrimSpace(last)) {
+		return strings.TrimSpace(last), nil
+	}
+	return clients[0], nil
 }
 
 // SwitchView walks the views by name, circularly.

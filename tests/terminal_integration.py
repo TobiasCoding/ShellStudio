@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only
 """Real PTY/tmux regression tests. All state and sockets live below .work."""
+import base64
 import fcntl
 import json
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import signal
 import sqlite3
@@ -196,6 +198,36 @@ class Integration(unittest.TestCase):
         t.expect("ShellStudio")
         self.assertEqual(t.output, self.cli("version").strip().encode()+b"\r\n")
         (WORK / "ui-startup.pty").write_bytes(t.capture)
+
+    def test_clipboard_uses_mosh_compatible_selector_through_nested_tmux(self):
+        terminal = self.terminal(str(self.root))
+        terminal.expect("F2 Menu")
+        view = json.loads(self.cli("views"))[0]["ID"]
+        self.cli("launch", "--view", view, "--name", "clipboard")
+        self.wait_for(lambda: bool(self.tmux("programs", "list-clients")))
+
+        # Exercise both the outer copy path and the nested program copy path.
+        # Mosh 1.4 accepts OSC 52;c; but drops tmux's default OSC 52;;.
+        for server in ("views", "programs"):
+            with self.subTest(server=server):
+                text = "clipboard from " + server + " — café\nsecond line"
+                payload = base64.b64encode(text.encode())
+                terminal.output = b""
+                self.tmux(server, "set-buffer", "-w", text)
+                self.wait_for(lambda: payload in terminal.output)
+                sequences = re.findall(rb"\x1b\]52;[^\x07]*\x07", terminal.output)
+                self.assertIn(b"\x1b]52;c;" + payload + b"\x07", sequences)
+                self.assertFalse(any(seq.startswith(b"\x1b]52;;") for seq in sequences))
+
+        # An application writing OSC 52 must also survive both tmux servers.
+        payload = base64.b64encode(b"clipboard from application")
+        terminal.output = b""
+        self.tmux("programs", "send-keys", "-l",
+                  "printf '\\033]52;c;" + payload.decode() + "\\007'")
+        self.tmux("programs", "send-keys", "Enter")
+        self.wait_for(lambda: b"\x1b]52;" in terminal.output)
+        self.assertIn(b"\x1b]52;c;" + payload + b"\x07",
+                      re.findall(rb"\x1b\]52;[^\x07]*\x07", terminal.output))
 
     def test_diagnostic_report_preserves_running_workspace_and_privacy(self):
         secret = "PRIVATE-DIAGNOSTIC-FIXTURE"
@@ -593,7 +625,7 @@ class Integration(unittest.TestCase):
         t.mouse(0, border, 10)
         t.mouse(32, border+1, 10)
         t.mouse(32, border+8, 10)
-        self.assertEqual(int(self.assert_explorer()["w"]), border)
+        self.assertEqual(int(self.assert_explorer()["w"]), border+8)
         t.mouse(0, border+8, 10, release=True, wait=0.5)
         self.wait_for(lambda: int(self.assert_explorer()["w"]) != border)
         selected = next(p for p in self.panes() if p["console"] == ids["terminal-second"])
@@ -605,6 +637,158 @@ class Integration(unittest.TestCase):
         self.wait_dialog_closed()
         self.assertEqual([c["ID"] for c in json.loads(self.cli("consoles"))], [ids["terminal-first"]])
         (WORK / "ui-restoration.pty").write_bytes(t.capture)
+
+    def test_resize_every_divider_preserves_console_identity_and_input(self):
+        view = json.loads(self.cli("new-view", "Resize"))
+        consoles = [json.loads(self.cli("launch", "--view", view["ID"])) for _ in range(4)]
+        t = self.terminal()
+        t.resize(160, 48)
+        t.expect("ACTIVE:")
+        t.pump(0.8)
+        pids = self.tmux("programs", "list-panes", "-a", "-F", "#{pane_pid}")
+        client = self.tmux("views", "list-clients", "-F", "#{client_name}")
+        for layout in ("even-horizontal", "even-vertical", "tiled", "main-vertical", "main-horizontal"):
+            self.cli("_view", "layout", "--client", client, "--layout", layout)
+            t.pump(0.4)
+            original = self.panes()
+            order = [p["console"] for p in original]
+            # Exercise every right/bottom edge, including lower rows and
+            # junctions with another divider. Both directions must work.
+            edges = [(p["id"], axis) for p in original for axis in ("x", "y")
+                     if (axis == "x" and int(p["x"])+int(p["w"]) < 159)
+                     or (axis == "y" and int(p["y"])+int(p["h"]) < 47)]
+            for pane, axis in edges:
+                for delta in (3, -3):
+                    with self.subTest(layout=layout, pane=pane, axis=axis, delta=delta):
+                        src = next(p for p in self.panes() if p["id"] == pane)
+                        x = int(src["x"])+(int(src["w"]) if axis == "x" else int(src["w"])//2)
+                        y = int(src["y"])+(int(src["h"]) if axis == "y" else int(src["h"])//2)
+                        dx, dy = (delta, 0) if axis == "x" else (0, delta)
+                        t.mouse(0, x, y)
+                        t.mouse(32, x+dx//abs(delta), y+dy//abs(delta))
+                        t.mouse(32, x+dx, y+dy)
+                        t.mouse(0, x+dx, y+dy, release=True, wait=0.3)
+                        dst = next(p for p in self.panes() if p["id"] == pane)
+                        size = "w" if axis == "x" else "h"
+                        self.assertEqual(int(dst[size]), int(src[size])+delta)
+                        self.assertEqual([p["console"] for p in self.panes()], order)
+        self.assertEqual(pids, self.tmux("programs", "list-panes", "-a", "-F", "#{pane_pid}"))
+        for c in consoles:
+            pane = next(p for p in self.panes() if p["console"] == c["ID"])
+            self.tmux("views", "select-pane", "-t", pane["id"])
+            t.send(b"printf 'RESIZE_%s\\n' CLEAN\r", 0.2)
+            captured = self.tmux("programs", "capture-pane", "-p", "-t", "=c-"+c["ID"]+":")
+            self.assertIn("RESIZE_CLEAN", captured)
+            self.assertNotRegex(captured, r"<32;|<0;|\^\[")
+
+    def test_vertical_drag_near_divider_junction_keeps_width(self):
+        view = json.loads(self.cli("new-view", "Junctions"))
+        for _ in range(4):
+            self.cli("launch", "--view", view["ID"])
+        t = self.terminal()
+        t.resize(160, 48)
+        t.expect("ACTIVE:")
+        t.pump(0.8)
+        src = next(p for p in self.panes() if p["kind"] == "console")
+        before = self.panes()
+        # A horizontal divider, one cell away from its junction with a
+        # vertical divider: proximity at release must not choose the axis.
+        x, y = int(src["x"])+int(src["w"])-1, int(src["y"])+int(src["h"])
+        t.mouse(0, x, y)
+        t.mouse(32, x, y+1)
+        t.mouse(32, x, y+4)
+        t.mouse(0, x, y+4, release=True, wait=0.4)
+        after = self.panes()
+        dst = next(p for p in after if p["id"] == src["id"])
+        self.assertEqual(int(dst["h"]), int(src["h"])+4)
+        self.assertEqual([p["w"] for p in after], [p["w"] for p in before])
+        self.assertEqual([p["console"] for p in after], [p["console"] for p in before])
+
+    def test_header_dialogs_keep_target_and_manual_geometry(self):
+        view = json.loads(self.cli("new-view", "Dialogs"))
+        consoles = [json.loads(self.cli("launch", "--view", view["ID"])) for _ in range(2)]
+        t = self.terminal()
+        t.resize(160, 48)
+        t.expect("ACTIVE:")
+        t.pump(0.8)
+        src, other = [p for p in self.panes() if p["kind"] == "console"]
+        self.tmux("views", "resize-pane", "-t", src["id"], "-x", "47")
+        before = self.panes()
+        pids = self.tmux("programs", "list-panes", "-a", "-F", "#{pane_pid}")
+
+        def header_action(key, title):
+            p = next(p for p in self.panes() if p["id"] == src["id"])
+            t.output = b""
+            t.mouse(2, int(p["x"])+5, int(p["y"]))
+            t.mouse(2, int(p["x"])+5, int(p["y"]), release=True)
+            t.expect("Kill and replace here")
+            t.send(key, 0.4)
+            t.expect(title)
+
+        header_action(b"n", "RENAME CONSOLE")
+        # Invalid input stays in the dialog; it never becomes terminal input.
+        t.send(b"bad#name\r")
+        t.expect("cannot contain")
+        self.tmux("views", "select-pane", "-t", other["id"])
+        t.send(b"renamed 'console'\r", 0.5)
+        self.wait_dialog_closed()
+        self.assertEqual(next(c["Name"] for c in json.loads(self.cli("consoles"))
+                              if c["ID"] == src["console"]), "renamed 'console'")
+        self.assertEqual(self.panes(), before)
+        header_action(b"m", "KILL CONSOLE")
+        t.send(b"\x1b", 0.4)
+        self.wait_dialog_closed()
+        self.assertEqual(len(json.loads(self.cli("consoles"))), 2)
+        self.assertEqual(pids, self.tmux("programs", "list-panes", "-a", "-F", "#{pane_pid}"))
+        # The finished-program menu also opens the full-screen centered modal.
+        self.tmux("views", "select-pane", "-t", src["id"])
+        t.send(b"exit\r", 0.5)
+        t.output = b""
+        t.send(b"\r")
+        t.expect("Restart")
+        t.send(b"n", 0.4)
+        t.expect("RENAME CONSOLE")
+        t.send(b"\x1b", 0.4)
+        self.wait_dialog_closed()
+        # Confirming while focus changes still ends the originally named console.
+        header_action(b"m", "KILL CONSOLE")
+        self.tmux("views", "select-pane", "-t", other["id"])
+        t.send(b"\r", 0.5)
+        self.wait_dialog_closed()
+        self.assertEqual([c["ID"] for c in json.loads(self.cli("consoles"))], [other["console"]])
+
+    def test_action_error_stays_in_modal_until_dismissed(self):
+        view = json.loads(self.cli("new-view", "Errors"))
+        console = json.loads(self.cli("launch", "--view", view["ID"]))
+        t = self.terminal()
+        t.resize(120, 36)
+        t.expect("ACTIVE:")
+        client = self.tmux("views", "list-clients", "-F", "#{client_name}")
+        t.output = b""
+        p = subprocess.Popen([str(BINARY), "_view", "layout", "--client", client,
+                              "--layout", "invalid"], env=self.env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            t.expect("Layout")
+            t.expect("invalid layout")
+            t.expect("Close")
+            t.pump(5.2)  # Longer than the timeout for background tmux commands.
+            self.assertIsNone(p.poll())
+            t.send(b"\x1b", 0.3)
+            out, err = p.communicate(timeout=10)
+            self.assertEqual(p.returncode, 0, err)
+            self.assertEqual(out, b"")
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.communicate()
+        self.assertEqual(list((self.root / "r/shellstudio").glob("message-*.json")), [])
+        pane = next(p for p in self.panes() if p["console"] == console["ID"])
+        self.tmux("views", "select-pane", "-t", pane["id"])
+        t.send(b"printf 'MODAL_%s\\n' CLEAN\r", 0.3)
+        captured = self.tmux("programs", "capture-pane", "-p", "-t", "=c-"+console["ID"]+":")
+        self.assertIn("MODAL_CLEAN", captured)
+        self.assertNotIn("invalid layout", captured)
 
     def test_no_agents_and_isolated_second_user_paths(self):
         self.cli("doctor")

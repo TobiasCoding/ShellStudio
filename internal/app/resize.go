@@ -16,6 +16,29 @@ import (
 	"shellstudio/internal/platform"
 )
 
+// ShowError addresses only the client that initiated an action. The text goes
+// through a private file, never through tmux formats or a shell command.
+func (a *App) ShowError(client, title, detail string) error {
+	if client == "" {
+		return nil
+	}
+	f, e := os.CreateTemp(a.Paths.Runtime, "message-*.json")
+	if e != nil {
+		return e
+	}
+	defer os.Remove(f.Name())
+	e = json.NewEncoder(f).Encode(struct{ Title, Detail string }{title, detail})
+	f.Close()
+	if e != nil {
+		return e
+	}
+	// Popups wait for user input; the five-second command timeout is for
+	// background tmux operations, not for reading a message.
+	c := exec.Command(a.Mux.Tmux, "-u", "-S", a.Mux.Socket(true), "display-popup", "-c", client,
+		"-E", "-x", "C", "-y", "C", "-w", "80%", "-h", "60%", a.Mux.Self("_message", f.Name()))
+	return c.Run()
+}
+
 func token(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:])[:24]
@@ -37,145 +60,6 @@ func startDetached(argv []string) error {
 // Detached runs this executable with arguments, detached from the caller.
 func (a *App) Detached(args ...string) error {
 	return startDetached(append([]string{a.Binary}, args...))
-}
-
-type resizeState struct {
-	Pane     string `json:"pane"`
-	Geometry []int  `json:"geometry"`
-	Window   string `json:"window"`
-	Started  int64  `json:"started"`
-	Axis     string `json:"axis"`
-}
-
-func (a *App) geometry(p string) (string, []int, bool) {
-	o, e := a.Mux.Run(true, "display-message", "-p", "-t", p, "#{window_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}")
-	if e != nil {
-		return "", nil, false
-	}
-	f := strings.Split(strings.TrimSpace(o), "\t")
-	if len(f) != 5 {
-		return "", nil, false
-	}
-	nums := make([]int, 4)
-	for i := range nums {
-		nums[i], _ = strconv.Atoi(f[i+1])
-	}
-	return f[0], nums, true
-}
-
-// Resize applies a border drag on release: one process on press, another on
-// the first movement and another on release; the rest stays inside tmux, so
-// consoles keep their geometry during the drag. The state file belongs to one
-// client, so two connections never overwrite each other.
-func (a *App) Resize(action, client, clientID, p, x, y, left, top string) {
-	if client == "" {
-		return
-	}
-	path := filepath.Join(a.Paths.Runtime, "resize-"+token(client)+".json")
-	option := ""
-	if _, e := strconv.Atoi(clientID); e == nil {
-		option = "@ss_resize_point_" + clientID
-	}
-	switch action {
-	case "cancel":
-		os.Remove(path)
-		if option != "" {
-			a.Mux.Run(true, "set-option", "-gu", option)
-		}
-		return
-	case "start":
-		if option != "" {
-			a.Mux.Run(true, "set-option", "-gu", option)
-		}
-		w, g, ok := a.geometry(p)
-		if !ok {
-			return
-		}
-		writeJSON(path, resizeState{Pane: p, Geometry: g, Window: w, Started: time.Now().UnixNano()})
-		return
-	}
-	defer func() {
-		if action == "end" {
-			os.Remove(path)
-			if option != "" {
-				a.Mux.Run(true, "set-option", "-gu", option)
-			}
-		}
-	}()
-	b, e := os.ReadFile(path)
-	if e != nil {
-		return
-	}
-	var st resizeState
-	if json.Unmarshal(b, &st) != nil || len(st.Geometry) != 4 || time.Since(time.Unix(0, st.Started)) > 30*time.Second {
-		return
-	}
-	src := st.Geometry
-	abs := func(x, y, left, top string) (int, int, bool) {
-		xi, e1 := strconv.Atoi(x)
-		yi, e2 := strconv.Atoi(y)
-		li, e3 := strconv.Atoi(left)
-		ti, e4 := strconv.Atoi(top)
-		if e1 != nil || e2 != nil || e3 != nil || e4 != nil || x == "" || y == "" {
-			return 0, 0, false
-		}
-		return li + xi, ti + yi, true
-	}
-	axisOf := func(ax, ay int) string {
-		right, bottom := src[0]+src[2], src[1]+src[3]
-		if absInt(ax-right) <= absInt(ay-bottom) {
-			return "x"
-		}
-		return "y"
-	}
-	if action == "orient" {
-		// The first movement stays near the original border. MouseDown1Border
-		// does not expose mouse_x/mouse_y in tmux 3.4.
-		ax, ay, ok := abs(x, y, left, top)
-		if !ok {
-			return
-		}
-		st.Axis = axisOf(ax, ay)
-		writeJSON(path, st)
-		return
-	}
-	if action != "end" {
-		return
-	}
-	ax, ay, ok := abs(x, y, left, top)
-	if !ok && option != "" {
-		o, _ := a.Mux.Run(true, "show-option", "-gqv", option)
-		if pt := strings.Split(strings.TrimSpace(o), ","); len(pt) == 4 {
-			ax, ay, ok = abs(pt[2], pt[3], pt[0], pt[1])
-		}
-	}
-	if !ok {
-		return
-	}
-	// A re-layout or external resize during the gesture invalidates the origin.
-	w, cur, ok := a.geometry(st.Pane)
-	if !ok || w != st.Window || cur[0] != src[0] || cur[1] != src[1] || cur[2] != src[2] || cur[3] != src[3] {
-		return
-	}
-	axis := st.Axis
-	if axis != "x" && axis != "y" {
-		// Crossing a border, tmux can omit both coordinates in the first
-		// MouseDrag1Border. The release over a pane does deliver them.
-		axis = axisOf(ax, ay)
-	}
-	wanted, actual := ax-src[0], src[2]
-	if axis == "y" {
-		wanted, actual = ay-src[1], src[3]
-	}
-	if wanted != actual && wanted > 0 {
-		a.Mux.Run(true, "resize-pane", "-t", st.Pane, "-"+axis, strconv.Itoa(wanted)) // tmux applies its minimums.
-	}
-}
-func absInt(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
 }
 
 type windowResize struct {

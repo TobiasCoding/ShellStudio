@@ -3,7 +3,8 @@
 <img src="logo.svg" width="65%"/>
 </div>
 
-Shell Studio is a standalone Linux terminal workspace for local terminals, WSL and SSH.
+Shell Studio is a standalone Linux terminal workspace for local terminals, WSL,
+SSH and Mosh.
 Persistent consoles live in a private tmux server. The workspace opens directly
 into a view, with a file tree on the left, console headers and clickable dialogs,
 following the layout and interaction of sesiones. Notes and extension management
@@ -11,6 +12,17 @@ use dedicated Bubble Tea screens.
 
 License: GPL-3.0-only. Bundled agent-chat and agent-gantt packages retain MIT.
 External programs have their own licenses. No agent installation is required.
+
+## What's new
+
+- Copying terminal text to your local clipboard now works through Mosh when your
+  terminal supports and allows clipboard access.
+- Dragging panel borders resizes them live, including near divider junctions.
+- Renaming a console preserves your manually adjusted panel sizes.
+- Rename and confirmation dialogs open centered in the correct user's terminal,
+  including actions on finished consoles.
+- Action errors stay visible in a dialog until dismissed, so you can read them
+  before continuing.
 
 ## Install
 
@@ -31,9 +43,7 @@ tmux 3.4+. If tmux is missing, the installer asks before using the system packag
 manager; this step may require sudo. No Go installation is needed. Optional MCP
 installation needs Python 3.9+ with venv/ensurepip.
 
-The one-line command requires a public repository and a published release with
-Linux binaries and SHA256SUMS. A GitHub `/tree/` URL is an HTML page, not an
-installer. To review the script or select a version first:
+To review the script or select a version first:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/TobiasCoding/ShellStudio/main/scripts/install.sh -o install.sh
@@ -45,6 +55,49 @@ Options include `--bin-dir /absolute/directory`, `--no-path`, and `--yes` to per
 installing a missing tmux without the confirmation prompt. A custom binary
 directory must already be on PATH or be added by you. Re-running the installer
 replaces the executable and preserves workspace data.
+
+## Remote connections with Mosh (highly recommended)
+
+We strongly recommend [Mosh](https://mosh.org/) for remote ShellStudio sessions,
+especially over Wi-Fi or unstable connections. It reconnects after temporary
+network interruptions and network changes, and makes typing feel more responsive.
+
+**Install Mosh on both your local computer and the remote Linux server.** On
+Windows, you can use it from a Linux distribution such as Ubuntu inside
+[Windows Subsystem for Linux (WSL)](https://learn.microsoft.com/en-us/windows/wsl/install).
+Run the local installation commands inside that distribution, then connect to
+the server over SSH and install Mosh there too. ShellStudio must also be installed
+on the server.
+
+On Ubuntu or Debian, run on **each end**:
+
+```sh
+sudo apt update
+sudo apt install mosh
+```
+
+For other Linux distributions, use the corresponding command on each machine:
+
+| Distribution | Install Mosh |
+| --- | --- |
+| Fedora | `sudo dnf install mosh` |
+| Arch Linux | `sudo pacman -Syu mosh` |
+| openSUSE | `sudo zypper install mosh` |
+
+Use Mosh 1.4 or newer on both ends. SSH access must work for login, and the server
+firewall or cloud security group must allow incoming UDP ports 60000–61000 for
+the Mosh connection.
+
+From your local Linux or WSL terminal:
+
+```sh
+mosh user@server
+# Once connected to the server:
+shellstudio /path/to/project
+```
+
+Clipboard copying still requires support and permission in your local terminal.
+File transfers and port forwarding use SSH.
 
 ## Open a folder
 
@@ -82,23 +135,6 @@ startup update, ShellStudio reopens with the same arguments and current director
 Existing consoles keep running. Noninteractive commands and internal tmux helpers
 do not check for updates. No extension or agent is updated by this mechanism.
 
-## Build from source
-
-Install Go 1.23+, tmux 3.4+ and, for the complete test suite, Python 3 with venv.
-From a source checkout:
-
-```sh
-make check
-make release
-sh scripts/install.sh --from "$PWD/dist"
-shellstudio doctor
-```
-
-The binary embeds the catalog, schema and MCP packages; it does not need its
-source checkout. The offline `--from` installer verifies local release checksums
-with the same checks used for downloaded binaries. See [releasing](docs/releasing.md)
-for publishing versions that the installer and updater can discover.
-
 ## Workspace
 
 The file tree occupies the left side at full height. Its clickable shortcuts open
@@ -121,7 +157,7 @@ the same dialogs as the keyboard:
 
 Click or right-click a console header to rename, zoom, move, replace, close its
 panel or end its program. Drag a header onto another console to exchange their
-positions. Drag borders to resize; geometry changes on release. Drag a file from
+positions. Drag borders to resize with live feedback. Drag a file from
 the tree onto a console to type its path. The tree supports search (/), previews,
 editing with nano (E), renaming (N) and reload (R). Its expanded folders and
 selection are saved per view. F2 can restore a hidden explorer.
@@ -169,25 +205,16 @@ stop programs. Uninstall retains immutable packages for active consoles; see
 [storage](docs/storage.md) for reclamation. The MCPs install offline into separate
 Python venvs and include read-only viewers. No private sessions or data migrate.
 
-## Diagnostics and development
+## Diagnostics
 
-    ssh HOST -t shellstudio
     shellstudio doctor
     shellstudio report
     shellstudio backup /absolute/path/backup.db
     shellstudio validate examples/htop.json
-    make preview
-    make check
-    make publish
 
-`make preview` runs the working code with separate local data and tmux sessions.
 `shellstudio report` exports a private JSON diagnostic file with recent automatic
 logs and the current workspace state. Reproduce the issue and send the file it
 prints; see [diagnostic reports](docs/diagnostics.md) for contents and limits.
-`make check` tests without publishing. After reviewing and committing changes,
-`make publish` tests an isolated candidate, assigns the next patch version and
-pushes its release tag. GitHub publishes the update only after its checks pass.
-See [the development and release workflow](docs/releasing.md).
 
 ## Agent permissions
 

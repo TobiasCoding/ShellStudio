@@ -179,6 +179,49 @@ func Choose(s *Screen, title string, items []string, selected int, message strin
 	}
 }
 
+// Message keeps errors readable in a popup, including on narrow terminals.
+func Message(s *Screen, title, detail string) {
+	offset := 0
+	for {
+		lines := Wrap(detail, max(1, s.W-2))
+		capacity := max(1, s.H-5)
+		offset = max(0, min(offset, len(lines)-capacity))
+		s.Erase()
+		s.Draw(0, title, Bold)
+		for i := offset; i < len(lines) && i < offset+capacity; i++ {
+			s.Draw(2+i-offset, lines[i], Normal)
+		}
+		s.Draw(s.H-2, "Enter / Esc  Close    ↑↓  Scroll", Highlight)
+		s.Refresh()
+		ev := s.Read(-1)
+		if ev.Kind == MouseEvent {
+			switch {
+			case ev.Button == 64:
+				offset--
+			case ev.Button == 65:
+				offset++
+			case ev.Release && ev.Button == 0 && ev.Y == s.H-2:
+				return
+			}
+		}
+		if ev.Kind != KeyEvent {
+			continue
+		}
+		switch ev.Key {
+		case "enter", "esc", "q":
+			return
+		case "up":
+			offset--
+		case "down":
+			offset++
+		case "pgup":
+			offset -= capacity
+		case "pgdown":
+			offset += capacity
+		}
+	}
+}
+
 // Confirm: one key confirms; Escape cancels without sending anything to a program.
 func Confirm(s *Screen, title, detail string) bool {
 	start := -1

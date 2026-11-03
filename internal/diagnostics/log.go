@@ -182,7 +182,7 @@ func Command(args []string) string {
 	if len(args) == 0 {
 		return "workspace"
 	}
-	known := " open --menu update version --version help --help -h schema validate doctor report backup views consoles new-view launch restart stop kill extensions notes viewer _exec _empty _disconnected _explorer _close _sync _view _dialog _action _resize _resize_window "
+	known := " open --menu update version --version help --help -h schema validate doctor report backup views consoles new-view launch restart stop kill extensions notes viewer _exec _empty _disconnected _explorer _close _sync _view _dialog _message _action _resize_window "
 	if !strings.Contains(known, " "+args[0]+" ") {
 		return "workspace-or-unknown"
 	}
