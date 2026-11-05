@@ -59,8 +59,38 @@ func (a *App) ConfigureViews() error {
 	cmds = append(cmds, []string{"set-option", "-g", "@ss_lang", i18n.Lang()},
 		[]string{"set-option", "-g", "@ss_tabs", mux.TabsFormat(sortViews(vs), 0)},
 		[]string{"set-option", "-g", "@ss_tabs_short", mux.TabsFormat(sortViews(vs), 10)})
-	_, e = a.Mux.Batch(true, cmds...)
-	return e
+	if _, e = a.Mux.Batch(true, cmds...); e != nil {
+		return e
+	}
+	a.fitAttachedWindows()
+	return nil
+}
+
+// fitAttachedWindows sizes the windows of attached views to their clients.
+// View windows are manually sized: a server configured by an older release,
+// without the top bar, keeps windows one row too tall after an upgrade, and
+// the bar would hide their last row until the terminal was resized.
+func (a *App) fitAttachedWindows() {
+	o, e := a.Mux.Run(true, "list-clients", "-F", "#{client_session}\t#{client_width}\t#{client_height}\t#{window_height}")
+	if e != nil {
+		return
+	}
+	var cmds [][]string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(o), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) != 4 || !strings.HasPrefix(f[0], "v-") || seen[f[0]] {
+			continue
+		}
+		seen[f[0]] = true
+		h, _ := strconv.Atoi(f[2])
+		if want := strconv.Itoa(WindowHeight(h)); f[3] != want && h > 0 {
+			cmds = append(cmds, []string{"resize-window", "-t", "=" + f[0] + ":", "-x", f[1], "-y", want})
+		}
+	}
+	if len(cmds) > 0 {
+		a.Mux.Batch(true, cmds...)
+	}
 }
 
 // Sync renders a view, creating its session if needed. Renders queue behind
