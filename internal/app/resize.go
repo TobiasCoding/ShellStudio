@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"shellstudio/internal/mux"
 	"shellstudio/internal/platform"
 )
 
@@ -57,6 +58,10 @@ func startDetached(argv []string) error {
 	return nil
 }
 
+// WindowHeight is the height of a view window in a client of the given
+// height: the top bar (the views server's status line) takes its first rows.
+func WindowHeight(client int) int { return max(1, client-mux.TopBarRows) }
+
 // Detached runs this executable with arguments, detached from the caller.
 func (a *App) Detached(args ...string) error {
 	return startDetached(append([]string{a.Binary}, args...))
@@ -92,7 +97,8 @@ func (a *App) ResizeWindow(client, worker string, immediate bool) {
 			return
 		}
 		if immediate {
-			if _, e := a.Mux.Run(true, "resize-window", "-t", "="+row[1]+":", "-x", row[2], "-y", row[3]); e == nil {
+			height, _ := strconv.Atoi(row[3])
+			if _, e := a.Mux.Run(true, "resize-window", "-t", "="+row[1]+":", "-x", row[2], "-y", strconv.Itoa(WindowHeight(height))); e == nil {
 				width, _ := strconv.Atoi(row[2])
 				a.resizeExplorer(row[1], width)
 			}
@@ -169,7 +175,7 @@ func (a *App) ResizeWindow(client, worker string, immediate bool) {
 			st.Width, _ = strconv.Atoi(attached[0][2])
 			st.Height, _ = strconv.Atoi(attached[0][3])
 		}
-		_, e = a.Mux.Run(true, "resize-window", "-t", "="+st.Session+":", "-x", strconv.Itoa(st.Width), "-y", strconv.Itoa(st.Height))
+		_, e = a.Mux.Run(true, "resize-window", "-t", "="+st.Session+":", "-x", strconv.Itoa(st.Width), "-y", strconv.Itoa(WindowHeight(st.Height)))
 		os.Remove(path)
 		platform.Unlock(l)
 		if e != nil {
@@ -193,29 +199,84 @@ func (a *App) resizeExplorer(session string, width int) {
 	if e != nil {
 		return
 	}
-	out, e := a.Mux.Run(true, "list-panes", "-t", "="+session+":", "-F", "#{@ss_kind}\t#{pane_id}\t#{pane_width}")
+	out, e := a.Mux.Run(true, "list-panes", "-t", "="+session+":", "-F", "#{@ss_kind}\t#{pane_id}\t#{pane_width}\t#{pane_height}\t#{window_height}")
 	if e != nil {
 		return
 	}
-	present := false
+	explorer, minimized := false, false
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		f := strings.Split(line, "\t")
-		if len(f) != 3 || f[0] != "explorer" {
+		if len(f) != 5 || (f[0] != "explorer" && f[0] != "minimized") {
 			continue
 		}
-		present = true
+		if f[0] == "explorer" {
+			explorer = true
+		} else {
+			minimized = true
+		}
 		paneWidth, _ := strconv.Atoi(f[2])
 		// tmux can shrink the leftmost pane to two columns when a detached
 		// window is attached to a smaller client. Keep its controls readable.
-		if v.Explorer && width >= 70 && paneWidth < min(20, width/4) {
-			a.Mux.Run(true, "resize-pane", "-t", f[1], "-x", strconv.Itoa(min(32, width/4)))
+		// A saved width (or height) is the user's: tmux scales panes when the
+		// window grows from the size it was created at.
+		if want := LeftWidth(v, width); width >= 70 && (paneWidth < min(20, width/4) || (v.ExplorerWidth > 0 && paneWidth != want)) {
+			a.Mux.Run(true, "resize-pane", "-t", f[1], "-x", strconv.Itoa(want))
+		}
+		if f[0] == "minimized" && explorer && v.MinimizedHeight > 0 {
+			h, _ := strconv.Atoi(f[3])
+			wh, _ := strconv.Atoi(f[4])
+			if want := MinimizedHeight(v, wh); h != want {
+				a.Mux.Run(true, "resize-pane", "-t", f[1], "-y", strconv.Itoa(want))
+			}
 		}
 	}
-	if present != (v.Explorer && width >= 70) {
+	wantExplorer, wantMinimized := leftColumn(v, width)
+	if explorer != wantExplorer || minimized != wantMinimized {
 		if e := a.Sync(view); e != nil {
 			a.RecordError(e, "Resize explorer")
 		}
 	}
+}
+
+// SavePanelSizes stores the width of the left column and the height of the
+// Minimized panel of the view that contains a pane, after the user drags a
+// divider. Narrow windows, where the column is hidden, keep the saved sizes.
+func (a *App) SavePanelSizes(pane string) error {
+	o, e := a.Mux.Run(true, "display-message", "-p", "-t", pane, "#{session_name}\t#{window_width}")
+	if e != nil {
+		return e
+	}
+	session, cols, _ := strings.Cut(strings.TrimSpace(o), "\t")
+	if w, _ := strconv.Atoi(cols); w < 70 || !strings.HasPrefix(session, "v-") {
+		return nil
+	}
+	out, e := a.Mux.Run(true, "list-panes", "-t", "="+session+":", "-F", "#{@ss_kind}\t#{pane_width}\t#{pane_height}")
+	if e != nil {
+		return e
+	}
+	var ew, mw, mh = -1, -1, -1
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) != 3 {
+			continue
+		}
+		switch f[0] {
+		case "explorer":
+			ew, _ = strconv.Atoi(f[1])
+		case "minimized":
+			mw, _ = strconv.Atoi(f[1])
+			mh, _ = strconv.Atoi(f[2])
+		}
+	}
+	width, height := ew, mh
+	if ew < 0 {
+		// Alone in the column, the panel's height is the window's.
+		width, height = mw, -1
+	}
+	if width < 0 && height < 0 {
+		return nil
+	}
+	return a.Store.SetPanelSizes(strings.TrimPrefix(session, "v-"), width, height)
 }
 
 // Chain opens another dialog in its own popup, sized to its content, as soon

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"shellstudio/internal/i18n"
 	"shellstudio/internal/update"
 )
 
@@ -28,46 +29,46 @@ func startupUpdate(manual, checkOnly bool) error {
 		if manual {
 			return e
 		}
-		fmt.Fprintln(os.Stderr, "ShellStudio: update check unavailable; continuing with the installed version.")
+		fmt.Fprintln(os.Stderr, i18n.T("cli.update_off"))
 		return nil
 	}
 	if !update.Newer(release.Tag, version) {
 		if manual {
-			fmt.Println("ShellStudio is up to date (" + version + ").")
+			fmt.Println(i18n.T("cli.up_to_date", version))
 		}
 		return nil
 	}
 	if checkOnly {
-		fmt.Printf("ShellStudio %s is available (installed: %s).\n", strings.TrimPrefix(release.Tag, "v"), version)
+		fmt.Println(i18n.T("cli.available", strings.TrimPrefix(release.Tag, "v"), version))
 		return nil
 	}
 	tty, e := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if e != nil {
 		if manual {
-			return fmt.Errorf("update confirmation needs a terminal: %w", e)
+			return fmt.Errorf("%s: %w", i18n.T("cli.update_tty"), e)
 		}
 		return nil
 	}
 	defer tty.Close()
 	if !update.Prompt(tty, tty, version, release.Tag) {
-		fmt.Fprintln(tty, "Keeping the installed version.")
+		fmt.Fprintln(tty, i18n.T("cli.keeping"))
 		return nil
 	}
 	executable, e := os.Executable()
 	if e != nil {
 		return e
 	}
-	fmt.Fprintln(tty, "Downloading and verifying the update…")
+	fmt.Fprintln(tty, i18n.T("cli.downloading"))
 	ctx, cancel = context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if e = client.Install(ctx, release, executable); e != nil {
 		if manual {
 			return e
 		}
-		fmt.Fprintln(tty, "Update failed:", e, "\nContinuing with the installed version.")
+		fmt.Fprintln(tty, i18n.T("cli.update_failed", e))
 		return nil
 	}
-	fmt.Fprintln(tty, "Updated to", strings.TrimPrefix(release.Tag, "v")+".")
+	fmt.Fprintln(tty, i18n.T("cli.updated", strings.TrimPrefix(release.Tag, "v")))
 	if manual {
 		return nil
 	}

@@ -2,11 +2,11 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 	"unicode"
 
 	"github.com/mattn/go-runewidth"
+	"shellstudio/internal/i18n"
 )
 
 // Wrap splits text into lines of at most width columns, breaking long words.
@@ -74,7 +74,7 @@ func Choose(s *Screen, title string, items []string, selected int, message strin
 		s.Erase()
 		s.Draw(0, title, Bold)
 		if s.H < 8 || s.W < 24 {
-			s.Draw(2, "Enlarge the terminal. Q: leave", Normal)
+			s.Draw(2, i18n.T("ui.choose.small"), Normal)
 		} else {
 			// List and shortcuts stay apart even in short terminals. The list
 			// keeps the rows it needs (up to 3): in a popup sized to its content
@@ -88,7 +88,7 @@ func Choose(s *Screen, title string, items []string, selected int, message strin
 			page %= pages
 			visible = help[min(len(help), page*helpCap):min(len(help), (page+1)*helpCap)]
 			if pages > 1 {
-				visible = append(append([]string{}, visible...), fmt.Sprintf("Tab  More shortcuts (%d/%d)", page+1, pages))
+				visible = append(append([]string{}, visible...), i18n.T("ui.choose.more", page+1, pages))
 			}
 			capacity = max(1, s.H-len(visible)-5)
 			offset = (selected / capacity) * capacity
@@ -96,7 +96,7 @@ func Choose(s *Screen, title string, items []string, selected int, message strin
 			if len(items) > 0 {
 				n = selected + 1
 			}
-			s.Draw(1, fmt.Sprintf("%d/%d | ↑↓ choose", n, len(items)), Normal)
+			s.Draw(1, i18n.T("ui.choose.count", n, len(items)), Normal)
 			for i := offset; i < len(items) && i < offset+capacity; i++ {
 				if i == selected {
 					s.Draw(3+i-offset, "> "+items[i], Highlight)
@@ -105,7 +105,7 @@ func Choose(s *Screen, title string, items []string, selected int, message strin
 				}
 			}
 			if len(items) == 0 {
-				s.Draw(3, "No items.", Normal)
+				s.Draw(3, i18n.T("ui.choose.empty"), Normal)
 			}
 			s.Draw(s.H-len(visible)-2, message, Normal)
 			for i, line := range visible {
@@ -191,7 +191,7 @@ func Message(s *Screen, title, detail string) {
 		for i := offset; i < len(lines) && i < offset+capacity; i++ {
 			s.Draw(2+i-offset, lines[i], Normal)
 		}
-		s.Draw(s.H-2, "Enter / Esc  Close    ↑↓  Scroll", Highlight)
+		s.Draw(s.H-2, i18n.T("ui.message.keys"), Highlight)
 		s.Refresh()
 		ev := s.Read(-1)
 		if ev.Kind == MouseEvent {
@@ -239,11 +239,11 @@ func Confirm(s *Screen, title, detail string) bool {
 				s.Draw(start+i, l, Normal)
 			}
 			start += len(details) + 1
-			s.Draw(start, "Enter  Confirm", Highlight)
-			s.Draw(start+1, "Esc  Cancel", Normal)
+			s.Draw(start, i18n.T("ui.confirm.ok"), Highlight)
+			s.Draw(start+1, i18n.T("ui.confirm.cancel"), Normal)
 		} else {
-			s.Draw(1, "Enlarge the terminal to confirm.", Normal)
-			s.Draw(3, "Esc  Cancel", Normal)
+			s.Draw(1, i18n.T("ui.confirm.small"), Normal)
+			s.Draw(3, i18n.T("ui.confirm.cancel"), Normal)
 		}
 		s.Refresh()
 		ev := s.Read(-1)
@@ -286,8 +286,8 @@ func Prompt(s *Screen, title, detail, initial string, limit int, def string) (st
 			shown = string(r[len(r)-visible:])
 		}
 		s.Draw(4, "> "+shown+"_", Highlight)
-		s.Draw(6, "Enter  Accept", Normal)
-		s.Draw(7, "Esc  Cancel", Normal)
+		s.Draw(6, i18n.T("ui.prompt.accept"), Normal)
+		s.Draw(7, i18n.T("ui.confirm.cancel"), Normal)
 		s.Refresh()
 		ev := s.Read(-1)
 		switch ev.Kind {

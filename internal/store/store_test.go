@@ -193,7 +193,7 @@ func TestBackupRecoveryAndMigrations(t *testing.T) {
 	}
 	var v int
 	b.DB.QueryRow("PRAGMA user_version").Scan(&v)
-	if v != 3 {
+	if v != SchemaVersion {
 		t.Fatal(v)
 	}
 	b.DB.Exec("PRAGMA user_version=999")
@@ -262,17 +262,14 @@ func TestRejectSymlinkDatabase(t *testing.T) {
 func TestSchemaThreeMigratesViews(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "db")
+	db := legacyDB(t, p, 2)
+	_, e := db.Exec(`INSERT INTO views(id,name,folder,layout,explorer) VALUES('old','Old','/','1bdd,209x50,0,0{104x50,0,0,2,104x50,105,0,4}',0)`)
+	if e != nil {
+		t.Fatal(e)
+	}
+	db.Close()
+	v := View{ID: "old"}
 	s, e := Open(p)
-	if e != nil {
-		t.Fatal(e)
-	}
-	v, _ := s.NewView("Old", "/")
-	_, e = s.DB.Exec(`ALTER TABLE views DROP COLUMN tree; UPDATE views SET explorer=0, layout='1bdd,209x50,0,0{104x50,0,0,2,104x50,105,0,4}'; PRAGMA user_version=2;`)
-	if e != nil {
-		t.Fatal(e)
-	}
-	s.Close()
-	s, e = Open(p)
 	if e != nil {
 		t.Fatal(e)
 	}

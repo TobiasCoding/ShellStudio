@@ -17,6 +17,15 @@ its WAL may contain the latest commits. Create a verified backup with:
 
     shellstudio backup /absolute/private/path/backup.db
 
+Schema 4 (tags, descriptions, minimized consoles and panel sizes) is applied
+in one transaction on first open; a backup made before it opens with this
+version and is migrated the same way. Older releases reject a schema 4
+database instead of altering it.
+
+The preferences of the Minimized panel (visible columns, sort and tag filter)
+and the language live in config.json as minimized_columns, minimized_sort,
+minimized_filter and language. The search text is never saved.
+
 SQLite VACUUM INTO refuses an existing destination; ShellStudio opens and checks
 the result. Opening corrupt or future-schema databases fails visibly.
 

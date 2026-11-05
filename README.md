@@ -15,14 +15,24 @@ External programs have their own licenses. No agent installation is required.
 
 ## What's new
 
-- Copying terminal text to your local clipboard now works through Mosh when your
-  terminal supports and allows clipboard access.
-- Dragging panel borders resizes them live, including near divider junctions.
-- Renaming a console preserves your manually adjusted panel sizes.
-- Rename and confirmation dialogs open centered in the correct user's terminal,
-  including actions on finished consoles.
-- Action errors stay visible in a dialog until dismissed, so you can read them
-  before continuing.
+- A top bar lists your views as tabs; click one to switch. Its New console,
+  Arrange and More menus open under the pointer.
+- Console headers read "Kind · Name" and have ─ (minimize), □ (maximize) and ▼
+  (menu) buttons. The focused console is highlighted in blue.
+- Minimized consoles keep running and appear in the Minimized panel under the
+  file tree. You can search them, filter by tag, sort the columns and restore a
+  console to its original place with a double click.
+- Tags: create, rename, recolor, reorder and delete your own colored tags, then
+  give each console a tag and a short description.
+- The file tree has a search field that filters the tree and keeps the folders
+  that contain matches.
+- The interface is available in Spanish and English: it follows your locale, or
+  choose a language under More ▸ Language.
+- The width of the left column and the height of the Minimized panel are saved
+  per view.
+- Terminal replies that arrive split or late (common over SSH and with Windows
+  Terminal) no longer move consoles or type digits into them. Moving a console
+  before or after its neighbor is now Alt+< / Alt+>.
 
 ## Install
 
@@ -155,8 +165,15 @@ the same dialogs as the keyboard:
 | Alt+1–5 | Columns, rows, grid, active on the left, active on top |
 | Alt+< / Alt+> | Move the console before / after its neighbor |
 
+The top bar shows one tab per view; right-click a tab to rename or close the
+view. New console ▼, Arrange ▼ and More ▼ hold the same actions as F2 plus tags,
+the Minimized panel and the language.
+
 Click or right-click a console header to rename, zoom, move, replace, close its
-panel or end its program. Drag a header onto another console to exchange their
+panel or end its program. Its ─ button minimizes the console: the program keeps
+running and the console moves to the Minimized panel under the tree, where
+Enter or a double click restores it to its place. □ zooms the panel and ▼ opens
+its menu, which also sets the console's tag and description. Drag a header onto another console to exchange their
 positions. Drag borders to resize with live feedback. Drag a file from
 the tree onto a console to type its path. The tree supports search (/), previews,
 editing with nano (E), renaming (N) and reload (R). Its expanded folders and

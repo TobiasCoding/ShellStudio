@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"shellstudio/internal/diagnostics"
+	"shellstudio/internal/i18n"
 	"shellstudio/internal/platform"
 )
 
 func diagnosticReport(args []string) error {
 	if len(args) > 1 || (len(args) == 1 && strings.HasPrefix(args[0], "-") && args[0] != "--stdout") {
-		return errors.New("usage: shellstudio report [FILE | --stdout]")
+		return errors.New(i18n.T("cli.usage", "shellstudio report [FILE | --stdout]"))
 	}
 	report := diagnostics.Collect(version)
 	if len(args) == 1 && args[0] == "--stdout" {
@@ -28,11 +29,11 @@ func diagnosticReport(args []string) error {
 	} else {
 		p, err := platform.Resolve()
 		if err != nil {
-			return fmt.Errorf("cannot locate report directory; use report --stdout: %w", err)
+			return fmt.Errorf("%s: %w", i18n.T("cli.report_locate"), err)
 		}
 		dir := filepath.Join(p.State, "reports")
 		if err = platform.PrivateDir(dir); err != nil {
-			return fmt.Errorf("cannot create report directory; use report --stdout: %w", err)
+			return fmt.Errorf("%s: %w", i18n.T("cli.report_create"), err)
 		}
 		path = filepath.Join(dir, "shellstudio-report-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".json")
 	}
@@ -59,6 +60,6 @@ func diagnosticReport(args []string) error {
 		os.Remove(path)
 		return err
 	}
-	fmt.Println("Diagnostic report:", path)
+	fmt.Println(i18n.T("cli.report_path", path))
 	return nil
 }

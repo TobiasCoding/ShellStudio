@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"shellstudio/internal/i18n"
 	"shellstudio/internal/mux"
 )
 
@@ -211,19 +212,19 @@ func WindowsDropPath(value string) string {
 func (a *App) SCPCommand(source, root, directory, client string) (string, error) {
 	source = WindowsDropPath(source)
 	if source == "" {
-		return "", errors.New("drag a single file or folder with an absolute Windows path")
+		return "", errors.New(i18n.T("err.drop_one"))
 	}
 	target, e := Resolve(root, directory)
 	if e != nil {
 		return "", e
 	}
 	if fi, e := os.Stat(target); e != nil || !fi.IsDir() {
-		return "", errors.New("the remote folder no longer exists or is outside the view folder")
+		return "", errors.New(i18n.T("err.remote_folder"))
 	}
 	address := a.SSHTarget(client)
 	host, port, hasPort := strings.Cut(address, " -p ")
 	if strings.Contains(host, "THIS-SERVER") {
-		return "", errors.New("the SSH server could not be identified; reconnect the view through SSH")
+		return "", errors.New(i18n.T("err.ssh_server"))
 	}
 	u, hostname, _ := strings.Cut(host, "@")
 	if strings.Contains(hostname, ":") && !strings.HasPrefix(hostname, "[") {

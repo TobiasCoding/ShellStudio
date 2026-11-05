@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"shellstudio/internal/diagnostics"
+	"shellstudio/internal/i18n"
 	"shellstudio/internal/mux"
 	"shellstudio/internal/platform"
 	"shellstudio/internal/store"
@@ -77,7 +78,7 @@ func (a *App) ErrorAgent() (string, error) {
 		}
 	}
 	if len(available) == 0 {
-		return "", errors.New("neither Claude nor Codex is installed in PATH")
+		return "", errors.New(i18n.T("err.no_agent"))
 	}
 	cs, _ := a.Store.Consoles("")
 	activity := a.Mux.Activity()
@@ -106,7 +107,7 @@ func (a *App) ErrorAgent() (string, error) {
 // initial prompt.
 func (a *App) SendErrorToAgent(item AppError, view string) (store.Console, error) {
 	if cur := a.CurrentError(); cur == nil || cur.ID != item.ID {
-		return store.Console{}, errors.New("the visible error changed; check the panel again")
+		return store.Console{}, errors.New(i18n.T("err.error_changed"))
 	}
 	agent, e := a.ErrorAgent()
 	if e != nil {
@@ -136,7 +137,7 @@ func Resolve(root, relative string) (string, error) {
 		rootReal = root
 	}
 	if real != rootReal && !strings.HasPrefix(real, rootReal+string(filepath.Separator)) {
-		return "", errors.New("the path is outside the view folder")
+		return "", errors.New(i18n.T("err.outside_view"))
 	}
 	return p, nil
 }
@@ -251,17 +252,17 @@ func (a *App) OpenEditor(view, relative string) (store.Console, error) {
 	}
 	fi, e := os.Stat(path)
 	if e != nil || !fi.Mode().IsRegular() {
-		return store.Console{}, errors.New("not a file")
+		return store.Console{}, errors.New(i18n.T("err.not_file"))
 	}
 	if fi.Size() > 50<<20 {
-		return store.Console{}, errors.New("too large for nano (more than 50 MiB)")
+		return store.Console{}, errors.New(i18n.T("err.too_large"))
 	}
 	if !ReadableText(path) {
-		return store.Console{}, errors.New("not a text file")
+		return store.Console{}, errors.New(i18n.T("err.not_text"))
 	}
 	nano, e := exec.LookPath("nano")
 	if e != nil {
-		return store.Console{}, errors.New("nano is missing")
+		return store.Console{}, errors.New(i18n.T("err.no_nano"))
 	}
 	stem := strings.Trim(unsafeStem.ReplaceAllString(filepath.Base(path), "-"), "-")
 	if len(stem) > 40 {
@@ -299,10 +300,10 @@ func (a *App) OpenEditor(view, relative string) (store.Console, error) {
 // RenamePath renames inside the same folder and never replaces anything.
 func RenamePath(root, relative, name string) (string, error) {
 	if relative == "." || relative == "" {
-		return "", errors.New("the root folder is not renamed from here")
+		return "", errors.New(i18n.T("err.root_rename"))
 	}
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") {
-		return "", errors.New("invalid name")
+		return "", errors.New(i18n.T("err.invalid_name"))
 	}
 	src, e := Resolve(root, relative)
 	if e != nil {
@@ -310,7 +311,7 @@ func RenamePath(root, relative, name string) (string, error) {
 	}
 	dst := filepath.Join(filepath.Dir(src), name)
 	if _, e := os.Lstat(dst); e == nil {
-		return "", fmt.Errorf("%s already exists", name)
+		return "", errors.New(i18n.T("err.exists", name))
 	}
 	if e := os.Rename(src, dst); e != nil {
 		return "", e

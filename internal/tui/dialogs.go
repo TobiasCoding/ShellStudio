@@ -9,11 +9,13 @@ import (
 	"time"
 
 	"shellstudio/internal/app"
+	"shellstudio/internal/i18n"
 	"shellstudio/internal/mux"
 	"shellstudio/internal/store"
 )
 
-const editableHint = "Enter uses the suggested one; type to change it."
+// editableHint follows the current language.
+func editableHint() string { return i18n.T("ui.dialog.editable") }
 
 // RunView opens one dialog in its popup. The result is the view to show
 // afterwards; Esc in a dialog opened from the view menu goes back to it.
@@ -25,7 +27,7 @@ func RunView(a *app.App, action, client, pane string, back bool) error {
 	result, err := runView(s, a, action, client, pane)
 	if err != nil {
 		a.RecordError(err, "Dialog")
-		Message(s, "ACTION COULD NOT BE COMPLETED", err.Error())
+		Message(s, i18n.T("ui.dialog.failed"), err.Error())
 	}
 	s.Close()
 	if err != nil {
@@ -108,8 +110,26 @@ func runView(s *Screen, a *app.App, action, client, pane string) (string, error)
 		return NewConsole(s, a, f.View), nil
 	case "views":
 		return Browse(s, a), nil
+	case "tags":
+		TagsDialog(s, a)
+		return "", nil
+	case "language":
+		return "", LanguageDialog(s, a)
 	}
-	return "", fmt.Errorf("unknown dialog: %s", action)
+	if isMenuAction(action) {
+		// Opened from a top bar menu: the same step as in the F2 menu.
+		f, e := focus()
+		if e != nil {
+			return "", e
+		}
+		v, e := a.Store.View(f.View)
+		if e != nil {
+			return "", e
+		}
+		r, _, e := menuAction(s, a, v, f.Console, client, f.Pane, action)
+		return r, e
+	}
+	return "", errors.New(i18n.T("ui.dialog.unknown", action))
 }
 
 func kindLabels(kinds []app.Kind) []string {
@@ -201,8 +221,8 @@ func ViewMenu(s *Screen, a *app.App, view, focused, client, pane string) string 
 			}
 		}
 		s.Erase()
-		s.Draw(0, "VIEW "+v.Name+" | "+mux.LayoutLabel(v.Layout), Bold)
-		s.Draw(1, "Click or key · arrows and Enter", Dim)
+		s.Draw(0, i18n.T("ui.menu.title", v.Name, mux.LayoutLabel(v.Layout)), Bold)
+		s.Draw(1, i18n.T("ui.menu.hint"), Dim)
 		for _, c := range cells {
 			if c.Y < offset || c.Y >= offset+capacity {
 				continue
@@ -294,7 +314,7 @@ func menuAction(s *Screen, a *app.App, v store.View, focused, client, pane, acti
 	switch {
 	case strings.HasPrefix(action, "kind:"):
 		kind := strings.TrimPrefix(action, "kind:")
-		label, ok := Prompt(s, "New "+kind+" console — editable name", editableHint, "", 60, app.SuggestedName())
+		label, ok := Prompt(s, i18n.T("ui.menu.new_kind_name", kind), editableHint(), "", 60, app.SuggestedName())
 		if !ok {
 			return "", true, nil
 		}
@@ -351,7 +371,7 @@ func menuAction(s *Screen, a *app.App, v store.View, focused, client, pane, acti
 func AgentPermissions(s *Screen, a *app.App) {
 	sel, message := 0, ""
 	for {
-		key, i := Choose(s, "AGENT PERMISSIONS", a.PermissionItems(), sel, message, app.PermissionsHelp)
+		key, i := Choose(s, i18n.T("ui.perm.title"), a.PermissionItems(), sel, message, app.PermissionsHelp())
 		if key != "enter" || i >= len(app.PermissionAgents) {
 			return
 		}
@@ -367,13 +387,14 @@ func AgentPermissions(s *Screen, a *app.App) {
 				}
 			}
 		}
-		k, j := Choose(s, strings.ToUpper(label)+" PERMISSIONS", app.PermissionModeItems(agent), at, "", app.PermissionModeHelp)
+		k, j := Choose(s, i18n.T("ui.perm.agent", strings.ToUpper(label)), app.PermissionModeItems(agent), at, "", app.PermissionModeHelp())
 		if k != "enter" || j >= len(modes) {
 			continue
 		}
 		p := modes[j]
-		if p.Dangerous && !Confirm(s, "Start new "+label+" consoles with "+p.Label+"?",
-			p.Detail+" The agent can change or delete any file your user can reach. Use it only in an isolated environment.") {
+		modeLabel, modeDetail := app.PermissionText(agent, p)
+		if p.Dangerous && !Confirm(s, i18n.T("ui.perm.confirm", label, modeLabel),
+			i18n.T("ui.perm.danger", modeDetail)) {
 			continue
 		}
 		if e := a.SetPermission(agent, p.ID); e != nil {
@@ -381,16 +402,16 @@ func AgentPermissions(s *Screen, a *app.App) {
 			message = e.Error()
 			continue
 		}
-		message = label + ": " + p.Label + " for new consoles"
+		message = i18n.T("ui.perm.set", label, modeLabel)
 	}
 }
 
 func newViewPrompts(s *Screen, a *app.App, folder string) (string, bool, error) {
-	name, ok := Prompt(s, "Name of the new view", "", "", 60, "")
+	name, ok := Prompt(s, i18n.T("ui.dialog.new_view"), "", "", 60, "")
 	if !ok || name == "" {
 		return "", false, nil
 	}
-	dir, ok := Prompt(s, "Folder of the new view", "Its explorer and new consoles start there.", folder, 4096, folder)
+	dir, ok := Prompt(s, i18n.T("ui.dialog.view_folder"), i18n.T("ui.dialog.folder_hint"), folder, 4096, folder)
 	if !ok {
 		return "", false, nil
 	}
@@ -410,12 +431,12 @@ func NewConsole(s *Screen, a *app.App, view string) string {
 	message := ""
 	for {
 		kinds := a.Kinds()
-		key, sel := Choose(s, "NEW CONSOLE IN "+v.Name, kindLabels(kinds), 0, message, app.NewHelp)
+		key, sel := Choose(s, i18n.T("ui.dialog.new_in", v.Name), kindLabels(kinds), 0, message, app.NewHelp())
 		if key != "enter" || len(kinds) == 0 {
 			return ""
 		}
 		kind := kinds[sel]
-		label, ok := Prompt(s, "Name of "+kind.ID+" (editable)", editableHint, "", 60, app.SuggestedName())
+		label, ok := Prompt(s, i18n.T("ui.dialog.name_of", kind.ID), editableHint(), "", 60, app.SuggestedName())
 		if !ok {
 			return ""
 		}
@@ -433,7 +454,7 @@ func NewConsole(s *Screen, a *app.App, view string) string {
 
 func chooseKind(s *Screen, a *app.App, title string) (app.Kind, bool) {
 	kinds := a.Kinds()
-	key, sel := Choose(s, title, kindLabels(kinds), 0, "", []string{"Enter  Choose kind", "Q / Esc  Cancel"})
+	key, sel := Choose(s, title, kindLabels(kinds), 0, "", app.ChooseKindHelp())
 	if key != "enter" || len(kinds) == 0 {
 		return app.Kind{}, false
 	}
@@ -447,24 +468,24 @@ func ReplaceFocused(s *Screen, a *app.App, client, pane string) (string, error) 
 		return "", e
 	}
 	if f.Console == "" {
-		return "", errors.New("choose a console to replace")
+		return "", errors.New(i18n.T("ui.dialog.pick_replace"))
 	}
-	kind, ok := chooseKind(s, a, "REPLACE "+f.Name)
+	kind, ok := chooseKind(s, a, i18n.T("ui.dialog.replace", f.Name))
 	if !ok {
 		return "", nil
 	}
-	label, ok := Prompt(s, "Name of the new "+kind.ID+" console", editableHint, "", 60, app.SuggestedName())
+	label, ok := Prompt(s, i18n.T("ui.dialog.name_new", kind.ID), editableHint(), "", 60, app.SuggestedName())
 	if !ok {
 		return "", nil
 	}
-	if !Confirm(s, "REPLACE CONSOLE", f.Name+" ends; the new console takes its place in every view") {
+	if !Confirm(s, i18n.T("ui.dialog.replace_c"), i18n.T("ui.dialog.replace_d", f.Name)) {
 		return "", nil
 	}
 	// The dialog can stay open while another action rebuilds the view. Never
 	// use a console captured from a pane that changed its origin.
 	cur, e := a.Focus(client, pane, false)
 	if e != nil || cur.View != f.View || cur.Console != f.Console || (pane != "" && cur.Pane != pane) {
-		return "", errors.New("the selected console changed during the dialog; open the menu again")
+		return "", errors.New(i18n.T("ui.dialog.changed"))
 	}
 	c, e := a.Replace(f.View, f.Console, kind.ID, label)
 	if e != nil {
@@ -480,9 +501,9 @@ func RenameFocused(s *Screen, a *app.App, client, pane string) (string, error) {
 	if e != nil || f.Console == "" {
 		return "", e
 	}
-	detail := "Enter keeps the name; type to replace it."
+	detail := i18n.T("ui.dialog.keep_name")
 	for {
-		name, ok := Prompt(s, "RENAME CONSOLE", detail, "", 80, f.Name)
+		name, ok := Prompt(s, i18n.T("ui.dialog.rename_c"), detail, "", 80, f.Name)
 		if !ok {
 			return "", nil
 		}
@@ -504,7 +525,7 @@ func KillFocused(s *Screen, a *app.App, client, pane string) (string, error) {
 	if f.Console == "" {
 		return "", nil
 	}
-	if Confirm(s, "KILL CONSOLE", f.Name+" — ends the process and removes it from every view") {
+	if Confirm(s, i18n.T("ui.dialog.kill_c"), i18n.T("ui.dialog.kill_d", f.Name)) {
 		return "", a.Kill(f.Console)
 	}
 	return "", nil
@@ -537,7 +558,7 @@ func Arrange(s *Screen, a *app.App, view, focused string) string {
 			items[i] = box + c.Name
 		}
 		var key string
-		key, selected = Choose(s, fmt.Sprintf("ARRANGE %s | %d/%d marked", v.Name, len(marked), len(members)), items, selected, message, app.ArrangeHelp)
+		key, selected = Choose(s, i18n.T("ui.dialog.arrange", v.Name, len(marked), len(members)), items, selected, message, app.ArrangeHelp())
 		message = ""
 		switch {
 		case key == "q" || key == "Q" || key == "esc":
@@ -564,7 +585,7 @@ func Arrange(s *Screen, a *app.App, view, focused string) string {
 			}
 		case len(key) == 1 && key >= "1" && key <= "5":
 			if len(marked) == 0 {
-				message = "Mark at least one console."
+				message = i18n.T("ui.dialog.mark_one")
 				continue
 			}
 			layout := mux.LayoutKeys[key[0]-'1'].Layout
@@ -590,7 +611,7 @@ func Arrange(s *Screen, a *app.App, view, focused string) string {
 				}
 				return view
 			}
-			label, ok := Prompt(s, "Name of the partial view (empty = automatic)", "", "", 60, "")
+			label, ok := Prompt(s, i18n.T("ui.dialog.partial"), "", "", 60, "")
 			if !ok {
 				continue
 			}
@@ -622,10 +643,10 @@ func Browse(s *Screen, a *app.App) string {
 		items := make([]string, len(views))
 		for i, v := range views {
 			cs, _ := a.Store.Consoles(v.ID)
-			items[i] = fmt.Sprintf("%s | %d consoles | %s", v.Name, len(cs), mux.LayoutLabel(v.Layout))
+			items[i] = i18n.T("ui.dialog.view_item", v.Name, len(cs), mux.LayoutLabel(v.Layout))
 		}
 		var key string
-		key, selected = Choose(s, "SAVED VIEWS", items, selected, message, app.BrowseHelp)
+		key, selected = Choose(s, i18n.T("ui.dialog.saved_views"), items, selected, message, app.BrowseHelp())
 		message = ""
 		var err error
 		switch {
@@ -649,7 +670,7 @@ func Browse(s *Screen, a *app.App) string {
 				return id
 			}
 		case key == "delete" && len(views) > 0:
-			if Confirm(s, "DELETE VIEW: "+views[selected].Name, "Its consoles keep running.") {
+			if Confirm(s, i18n.T("ui.dialog.delete_view", views[selected].Name), i18n.T("ui.dialog.keep_running")) {
 				err = a.DeleteView(views[selected].ID)
 			}
 		}
@@ -666,9 +687,9 @@ func AddDialog(s *Screen, a *app.App, view string) string {
 	programs, _ := a.Mux.Programs()
 	labels := make([]string, len(options))
 	for i, c := range options {
-		labels[i] = c.Name + " | " + app.Status(programs, c.ID)
+		labels[i] = c.Name + " | " + app.StatusText(app.Status(programs, c.ID))
 	}
-	key, i := Choose(s, "ADD CONSOLE", labels, 0, "", app.AddHelp)
+	key, i := Choose(s, i18n.T("ui.dialog.add"), labels, 0, "", app.AddHelp())
 	if key == "enter" && len(options) > 0 {
 		if e := a.AddToView(view, options[i].ID); e != nil {
 			a.RecordError(e, "Add console")
@@ -699,10 +720,10 @@ func EditView(s *Screen, a *app.App, view, focused string) string {
 		programs, _ := a.Mux.Programs()
 		items := make([]string, len(members))
 		for i, c := range members {
-			items[i] = c.Name + " | " + app.Status(programs, c.ID)
+			items[i] = c.Name + " | " + app.StatusText(app.Status(programs, c.ID))
 		}
 		var key string
-		key, selected = Choose(s, "CONSOLES OF "+v.Name, items, selected, message, a.ConsolesHelp())
+		key, selected = Choose(s, i18n.T("ui.dialog.consoles_of", v.Name), items, selected, message, a.ConsolesHelp())
 		message = ""
 		has := len(members) > 0 && selected < len(members)
 		var err error
@@ -718,43 +739,43 @@ func EditView(s *Screen, a *app.App, view, focused string) string {
 			options, _ := a.Addable(view)
 			labels := make([]string, len(options))
 			for i, c := range options {
-				labels[i] = c.Name + " | " + app.Status(programs, c.ID)
+				labels[i] = c.Name + " | " + app.StatusText(app.Status(programs, c.ID))
 			}
-			if k, i := Choose(s, "ADD CONSOLE", labels, 0, "", app.AddHelp); k == "enter" && len(options) > 0 {
+			if k, i := Choose(s, i18n.T("ui.dialog.add"), labels, 0, "", app.AddHelp()); k == "enter" && len(options) > 0 {
 				err = a.AddToView(view, options[i].ID)
 			}
 		case key == "-" && has:
 			if err = a.RemoveFromView(view, members[selected].ID); err == nil {
-				message = "Removed; it keeps running."
+				message = i18n.T("ui.dialog.removed")
 			}
 		case (key == "n" || key == "N") && has:
-			if name, ok := Prompt(s, "New full name of the console", members[selected].Name, members[selected].Name, 80, ""); ok && name != "" {
+			if name, ok := Prompt(s, i18n.T("ui.dialog.full_name"), members[selected].Name, members[selected].Name, 80, ""); ok && name != "" {
 				err = a.Rename(members[selected].ID, name)
 			}
 		case (key == "r" || key == "R") && has:
 			old := members[selected]
-			kind, ok := chooseKind(s, a, "REPLACE "+old.Name)
+			kind, ok := chooseKind(s, a, i18n.T("ui.dialog.replace", old.Name))
 			if !ok {
 				continue
 			}
-			label, ok := Prompt(s, "Name of the new "+kind.ID+" console", editableHint, "", 60, app.SuggestedName())
-			if ok && Confirm(s, "REPLACE CONSOLE", old.Name+" ends; the new console takes its place in every view") {
+			label, ok := Prompt(s, i18n.T("ui.dialog.name_new", kind.ID), editableHint(), "", 60, app.SuggestedName())
+			if ok && Confirm(s, i18n.T("ui.dialog.replace_c"), i18n.T("ui.dialog.replace_d", old.Name)) {
 				var c store.Console
 				if c, err = a.Replace(view, old.ID, kind.ID, label); err == nil {
-					message = "Replaced: " + old.Name + " → " + c.Name
+					message = i18n.T("ui.dialog.replaced", old.Name, c.Name)
 				}
 			}
 		case (key == "m" || key == "M" || key == "delete") && has:
 			old := members[selected]
-			if Confirm(s, "KILL CONSOLE", old.Name+" — ends the process") {
+			if Confirm(s, i18n.T("ui.dialog.kill_c"), i18n.T("ui.dialog.kill_short", old.Name)) {
 				if err = a.Kill(old.ID); err == nil {
-					message = "Console ended: " + old.Name
+					message = i18n.T("ui.dialog.ended", old.Name)
 				}
 			}
 		default:
 			for _, k := range a.Kinds() {
 				if k.Key != "" && strings.EqualFold(k.Key, key) {
-					label, ok := Prompt(s, "New "+k.ID+" console — editable name", editableHint, "", 60, app.SuggestedName())
+					label, ok := Prompt(s, i18n.T("ui.menu.new_kind_name", k.ID), editableHint(), "", 60, app.SuggestedName())
 					if !ok {
 						break
 					}
@@ -782,17 +803,17 @@ func Ports(s *Screen, a *app.App, client string) {
 	message, selected, copied := "", 0, "\x00"
 	copyCommand := func(command string) string {
 		if command == "" {
-			command = "# No ports selected"
+			command = i18n.T("ui.ports.none_cmd")
 		}
 		if e := a.CopyToClient(client, command); e != nil {
-			return "Could not copy: " + e.Error()
+			return i18n.T("ui.ports.no_copy", e.Error())
 		}
-		return "Your PC clipboard was updated."
+		return i18n.T("ui.ports.copied")
 	}
 	scan := func() ([]app.Port, map[int]bool) {
 		s.Erase()
-		s.Draw(0, "FORWARD PORTS", Bold)
-		s.Draw(2, "Looking for ports on this server…", Normal)
+		s.Draw(0, i18n.T("ui.ports.title"), Bold)
+		s.Draw(2, i18n.T("ui.ports.scanning"), Normal)
 		s.Refresh()
 		ports := app.ListeningPorts()
 		return ports, app.AnswersHTTP(ports)
@@ -800,7 +821,7 @@ func Ports(s *Screen, a *app.App, client string) {
 	ports, web := scan()
 	marked := map[int]bool{}
 	target := a.SSHTarget(client)
-	button := "[ Copy command ]"
+	button := i18n.T("ui.ports.button")
 	for {
 		var chosen []int
 		for _, p := range ports {
@@ -836,22 +857,23 @@ func Ports(s *Screen, a *app.App, client string) {
 		}
 		shown := command
 		if shown == "" {
-			shown = "(mark at least one port)"
+			shown = i18n.T("ui.ports.mark_one")
 		}
 		guide := []string{
-			"                      C/Enter copy · Space mark · A all/none · R rescan · Q/Esc back",
+			// The button is drawn over the leading spaces, at column 2.
+			strings.Repeat(" ", app.Width(button)+6) + i18n.T("ui.ports.keys"),
 			"",
-			"On your PC (PowerShell or Windows Terminal), log in with this command instead of the usual one:",
+			i18n.T("ui.ports.login"),
 			"  " + shown,
-			"and open " + orDots(strings.Join(urls, ", ")) + " in the browser. If you log in with a host name, use it instead of the IP.",
+			i18n.T("ui.ports.open", orDots(strings.Join(urls, ", "))),
 			"",
-			"To make it permanent, in ~/.ssh/config on your PC, inside the Host you use:",
+			i18n.T("ui.ports.permanent"),
 			"  " + orDots(strings.Join(locals, "  ")),
-			"Without reconnecting (ssh with EnableEscapeCommandline yes): Enter, ~C and " + escape + ", one at a time.",
+			i18n.T("ui.ports.escape", escape),
 		}
 		s.Erase()
-		s.Draw(0, fmt.Sprintf("FORWARD PORTS | %d/%d marked", len(chosen), len(ports)), Bold)
-		s.Draw(1, `Ports reachable on localhost. "web" means HTTP; choose which to forward.`, Normal)
+		s.Draw(0, i18n.T("ui.ports.marked", len(chosen), len(ports)), Bold)
+		s.Draw(1, i18n.T("ui.ports.intro"), Normal)
 		capacity := max(1, s.H-len(guide)-5)
 		selected = max(0, min(selected, len(ports)-1))
 		top := (selected / capacity) * capacity
@@ -877,7 +899,7 @@ func Ports(s *Screen, a *app.App, client string) {
 			}
 		}
 		if len(ports) == 0 {
-			s.Draw(3, "No ports are listening on localhost.", Normal)
+			s.Draw(3, i18n.T("ui.ports.empty"), Normal)
 		}
 		base := s.H - len(guide) - 1
 		s.Draw(base, message, Bold)
@@ -895,7 +917,7 @@ func Ports(s *Screen, a *app.App, client string) {
 			if !up {
 				continue
 			}
-			if ev.Y == base+1 && ev.X >= 2 && ev.X < 2+len(button) {
+			if ev.Y == base+1 && ev.X >= 2 && ev.X < 2+app.Width(button) {
 				key = "c"
 			} else if ev.Y >= 3 && ev.Y < 3+min(capacity, len(ports)-top) {
 				selected = top + ev.Y - 3
@@ -960,25 +982,25 @@ func Upload(a *app.App, source, view, target, client string) error {
 	}
 	defer s.Close()
 	message := ""
-	button := "[ Copy command ]"
+	button := i18n.T("ui.ports.button")
 	for {
 		s.Erase()
-		s.Draw(0, "UPLOAD FROM YOUR PC WITH SCP", Bold)
-		s.Draw(2, "Source on your PC: "+source, Normal)
-		s.Draw(3, "Destination on this server: "+dest+"/", Normal)
-		s.Draw(4, "PowerShell detects folders and adds -r automatically.", Normal)
-		s.Draw(6, "Command to run in a PowerShell tab on your PC:", Normal)
+		s.Draw(0, i18n.T("ui.upload.title"), Bold)
+		s.Draw(2, i18n.T("ui.upload.source", source), Normal)
+		s.Draw(3, i18n.T("ui.upload.dest", dest), Normal)
+		s.Draw(4, i18n.T("ui.upload.folders"), Normal)
+		s.Draw(6, i18n.T("ui.upload.run"), Normal)
 		for i, chunk := range Wrap(command, max(20, s.W-4)) {
 			if i >= max(0, s.H-10) {
 				break
 			}
 			s.Draw(7+i, chunk, Normal)
 		}
-		by, bx := s.H-3, max(2, (s.W-len(button))/2)
+		by, bx := s.H-3, max(2, (s.W-app.Width(button))/2)
 		s.DrawAt(by, bx, button, Highlight)
 		hint := message
 		if hint == "" {
-			hint = "C/Enter: copy · Esc: close"
+			hint = i18n.T("ui.upload.keys")
 		}
 		s.Draw(s.H-2, hint, Normal)
 		s.Refresh()
@@ -987,7 +1009,7 @@ func Upload(a *app.App, source, view, target, client string) error {
 		key := ev.Key
 		if ev.Kind == MouseEvent {
 			_, up := ev.Left()
-			if !(up && ev.Y == by && ev.X >= bx && ev.X < bx+len(button)) {
+			if !(up && ev.Y == by && ev.X >= bx && ev.X < bx+app.Width(button)) {
 				continue
 			}
 			key = "c"
@@ -999,9 +1021,9 @@ func Upload(a *app.App, source, view, target, client string) error {
 			return nil
 		case "c", "C", "enter":
 			if e := a.CopyToClient(client, command); e != nil {
-				message = "Could not copy: " + e.Error()
+				message = i18n.T("ui.ports.no_copy", e.Error())
 			} else {
-				message = "Copied to your PC clipboard."
+				message = i18n.T("ui.upload.copied")
 			}
 		}
 	}
@@ -1030,25 +1052,25 @@ func Disconnected(a *app.App) error {
 		s.Erase()
 		s.Header(" " + f.Name + " ▾ ")
 		if running {
-			s.Draw(2, f.Name+": the console disconnected.", Bold)
-			s.Draw(3, "The console keeps running.", Normal)
+			s.Draw(2, i18n.T("ui.disc.disconnected", f.Name), Bold)
+			s.Draw(3, i18n.T("ui.disc.running"), Normal)
 		} else if exists {
-			s.Draw(2, f.Name+": the console is stopped.", Bold)
-			s.Draw(3, "Its program is not running, for example after a restart of this machine.", Normal)
+			s.Draw(2, i18n.T("ui.disc.stopped", f.Name), Bold)
+			s.Draw(3, i18n.T("ui.disc.stopped_d"), Normal)
 		} else {
-			s.Draw(2, f.Name+": the console no longer exists.", Bold)
+			s.Draw(2, i18n.T("ui.disc.gone", f.Name), Bold)
 		}
 		var options []string
 		if running {
-			options = append(options, "Enter  Reconnect")
+			options = append(options, i18n.T("ui.disc.reconnect"))
 		} else if exists {
-			options = append(options, "Enter  Start it again")
+			options = append(options, i18n.T("ui.disc.start"))
 		}
-		options = append(options, "Q      Close panel")
+		options = append(options, i18n.T("ui.disc.close"))
 		if exists {
-			options = append(options, "M      Kill console")
+			options = append(options, i18n.T("ui.disc.kill"))
 		}
-		options = append(options, "", "F3     New console", "F2     View menu")
+		options = append(options, "", i18n.T("ui.disc.new"), i18n.T("ui.disc.menu"))
 		for i, l := range options {
 			s.Draw(5+i, l, Normal)
 		}
@@ -1072,16 +1094,16 @@ func Disconnected(a *app.App) error {
 		switch {
 		case key == "enter" && running:
 			a.Detached("_sync", f.View)
-			message = "Connecting…"
+			message = i18n.T("ui.disc.connecting")
 		case key == "enter" && exists:
 			if e := a.Detached("restart", f.Console); e != nil {
 				message = e.Error()
 			} else {
-				message = "Starting…"
+				message = i18n.T("ui.disc.starting")
 			}
 		case key == "q" || key == "Q" || key == "-":
 			a.Detached("_action", "remove", "--pane", pane)
-			message = "Closing…"
+			message = i18n.T("ui.disc.closing")
 		case (key == "m" || key == "M" || key == "delete") && exists:
 			if e := a.Detached("_dialog", "kill", "--pane", pane); e != nil {
 				message = e.Error()
@@ -1099,12 +1121,12 @@ func Empty() error {
 	defer s.Close()
 	for {
 		s.Erase()
-		s.Header(" Empty view ▾ ")
-		s.Draw(2, "This view is empty", Bold)
-		s.Draw(4, "F3  Create a console here", Normal)
-		s.Draw(6, "F2  Menu of this view", Normal)
-		s.Draw(8, "Ctrl+Shift+←/→  Change view", Normal)
-		s.Draw(10, "F10  Leave; consoles keep running", Normal)
+		s.Header(" " + i18n.T("ui.empty.name") + " ▾ ")
+		s.Draw(2, i18n.T("ui.empty.title"), Bold)
+		s.Draw(4, i18n.T("ui.empty.create"), Normal)
+		s.Draw(6, i18n.T("ui.empty.menu"), Normal)
+		s.Draw(8, i18n.T("ui.empty.switch"), Normal)
+		s.Draw(10, i18n.T("ui.empty.leave"), Normal)
 		s.Refresh()
 		s.Read(-1)
 	}

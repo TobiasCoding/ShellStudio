@@ -11,9 +11,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"shellstudio/internal/extensions"
+	"shellstudio/internal/i18n"
 	"shellstudio/internal/mux"
 	"shellstudio/internal/platform"
 	"shellstudio/internal/store"
@@ -25,6 +27,9 @@ type App struct {
 	Mux         *mux.Mux
 	Extensions  extensions.Manager
 	CWD, Binary string
+
+	labels   map[string]string
+	labelsAt time.Time
 }
 
 func Open() (*App, error) {
@@ -47,14 +52,19 @@ func Open() (*App, error) {
 		return nil, e
 	}
 	a := &App{Paths: p, Store: s, CWD: cwd, Binary: binary}
+	if c, e := platform.LoadConfig(p.Config); e == nil {
+		i18n.SetLang(i18n.Resolve(c.Language))
+	}
 	a.Mux = mux.New(p, binary)
+	a.Mux.HeaderOptions = a.headerOptions
+	a.adoptServerLanguage()
 	a.Extensions = extensions.Manager{Paths: p, Binary: binary, Log: s.Event}
 	a.Mux.Version = a.configVersion()
 	return a, nil
 }
 func (a *App) Close() { a.Store.Close() }
 
-// The controls change when the executable or the console kinds change; a
+// The controls change when the executable, the console kinds or the language change; a
 // running server is reconfigured only then.
 func (a *App) configVersion() string {
 	h := sha256.New()
@@ -65,6 +75,8 @@ func (a *App) configVersion() string {
 	for _, k := range a.Kinds() {
 		fmt.Fprint(h, "|", k.ID, k.Key)
 	}
+	// Formats contain translated text.
+	fmt.Fprint(h, "|lang=", i18n.Lang())
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
@@ -74,7 +86,7 @@ func (a *App) Manifest(id string) (extensions.Manifest, error) {
 			return v.Manifest, nil
 		}
 	}
-	return extensions.Manifest{}, fmt.Errorf("extension %s not found", id)
+	return extensions.Manifest{}, errors.New(i18n.T("err.no_extension", id))
 }
 
 // Kind is a console type: the built-in Terminal or an available extension.
@@ -184,11 +196,11 @@ func SuggestedName() string { return "session-" + store.ID()[:8] }
 // ValidName keeps console names readable in headers and menus.
 func ValidName(name string) error {
 	if name == "" || len([]rune(name)) > 80 {
-		return errors.New("use 1–80 characters")
+		return errors.New(i18n.T("err.name_length"))
 	}
 	for _, r := range name {
 		if unicode.IsControl(r) || r == '#' {
-			return errors.New("the name cannot contain control characters or #")
+			return errors.New(i18n.T("err.name_chars"))
 		}
 	}
 	return nil
@@ -207,7 +219,7 @@ func (a *App) profile(kind, profile string) (platform.Profile, error) {
 	}
 	if !a.Extensions.Enabled(man) {
 		if _, e = a.Extensions.Detect(man); e != nil {
-			return platform.Profile{}, fmt.Errorf("%s was not found in PATH", man.Detection.Executable)
+			return platform.Profile{}, errors.New(i18n.T("err.not_in_path", man.Detection.Executable))
 		}
 		if e = a.Extensions.Enable(man, true); e != nil {
 			return platform.Profile{}, e
@@ -236,7 +248,7 @@ func LoginShell() string {
 func (a *App) Launch(view, name, kind, profile, folder string, extra []string) (store.Console, error) {
 	v, e := a.Store.View(view)
 	if e != nil {
-		return store.Console{}, fmt.Errorf("view not found: %w", e)
+		return store.Console{}, fmt.Errorf("%s: %w", i18n.T("err.view_not_found"), e)
 	}
 	path, e := platform.Directory(folder, v.Folder, a.CWD)
 	if e != nil {
@@ -247,7 +259,7 @@ func (a *App) Launch(view, name, kind, profile, folder string, extra []string) (
 		return store.Console{}, e
 	}
 	if _, e = exec.LookPath(p.Executable); e != nil {
-		return store.Console{}, fmt.Errorf("%s was not found in PATH", p.Executable)
+		return store.Console{}, errors.New(i18n.T("err.not_in_path", p.Executable))
 	}
 	if name == "" {
 		name = kind
@@ -313,7 +325,7 @@ func (a *App) Stop(id string) error {
 // first: if the nested client died before, the pane would say "disconnected".
 func (a *App) Kill(id string) error {
 	if _, e := a.Store.Console(id); e != nil {
-		return errors.New("the console no longer exists")
+		return errors.New(i18n.T("err.console_gone"))
 	}
 	views, e := a.Store.ConsoleViews(id)
 	if e != nil {
@@ -322,6 +334,7 @@ func (a *App) Kill(id string) error {
 	if e = a.Store.DeleteConsole(id); e != nil {
 		return e
 	}
+	a.bumpMinimized()
 	re := a.RefreshOpen(views...)
 	if e = a.Mux.Stop(id); e != nil {
 		return e
@@ -334,7 +347,7 @@ func (a *App) Rename(id, name string) error {
 	}
 	c, e := a.Store.Console(id)
 	if e != nil {
-		return errors.New("the console no longer exists")
+		return errors.New(i18n.T("err.console_gone"))
 	}
 	if c.Name == name {
 		return nil
@@ -342,7 +355,8 @@ func (a *App) Rename(id, name string) error {
 	if e = a.Store.RenameConsole(id, name); e != nil {
 		return e
 	}
-	if e = a.Mux.SetName(id, name); e != nil {
+	c.Name = name
+	if e = a.Mux.SetHeader(c); e != nil {
 		return e
 	}
 	views, _ := a.Store.ConsoleViews(id)
@@ -363,7 +377,7 @@ func (a *App) Replace(view, old, kind, label string) (store.Console, error) {
 		}
 	}
 	if prev == nil {
-		return store.Console{}, errors.New("the selected console no longer belongs to this view")
+		return store.Console{}, errors.New(i18n.T("err.console_moved"))
 	}
 	if label == "" {
 		label = SuggestedName()
@@ -377,12 +391,16 @@ func (a *App) Replace(view, old, kind, label string) (store.Console, error) {
 		return store.Console{}, e
 	}
 	if _, e = exec.LookPath(p.Executable); e != nil {
-		return store.Console{}, fmt.Errorf("%s was not found in PATH", p.Executable)
+		return store.Console{}, errors.New(i18n.T("err.not_in_path", p.Executable))
 	}
 	c := store.Console{ID: store.ID(), Name: name, Extension: kind, Folder: prev.Folder,
 		Argv: append([]string{p.Executable}, p.Args...), Env: p.Env}
 	if e = a.Store.Replace(old, c); e != nil {
 		return c, e
+	}
+	// The stored console carries the old tag and description.
+	if stored, e := a.Store.Console(c.ID); e == nil {
+		c = stored
 	}
 	a.RememberKind(kind)
 	start := a.Mux.Start(c)
@@ -403,10 +421,14 @@ func (a *App) RemoveFromView(view, id string) error {
 }
 func (a *App) AddToView(view, id string) error {
 	if _, e := a.Store.Console(id); e != nil {
-		return errors.New("the console no longer exists")
+		return errors.New(i18n.T("err.console_gone"))
 	}
 	if e := a.Store.Link(view, id); e != nil {
 		return e
+	}
+	// Adding a console minimized in this view shows it again.
+	if e := a.Store.SetMinimized(view, id, false); e == nil {
+		a.bumpMinimized()
 	}
 	return a.RefreshOpen(view)
 }
@@ -437,7 +459,7 @@ func (a *App) Move(view, id string, delta int) error {
 }
 func (a *App) ApplyLayout(view, layout, focused string) error {
 	if !mux.ValidLayout(layout) {
-		return errors.New("invalid layout")
+		return errors.New(i18n.T("err.invalid_layout"))
 	}
 	v, e := a.Store.View(view)
 	if e != nil {
@@ -469,7 +491,7 @@ func (a *App) ToggleExplorer(view string) error {
 func (a *App) NewView(name, folder string, members []string, layout string) (store.View, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len([]rune(name)) > 80 {
-		return store.View{}, errors.New("use 1–80 characters for the view name")
+		return store.View{}, errors.New(i18n.T("err.view_name"))
 	}
 	views, e := a.Store.Views()
 	if e != nil {
@@ -477,7 +499,7 @@ func (a *App) NewView(name, folder string, members []string, layout string) (sto
 	}
 	for _, v := range views {
 		if v.Name == name {
-			return store.View{}, fmt.Errorf("the view %s already exists", name)
+			return store.View{}, errors.New(i18n.T("err.view_exists", name))
 		}
 	}
 	p, e := platform.Directory(folder, "", a.CWD)
@@ -512,18 +534,17 @@ func (a *App) DeleteView(id string) error {
 	a.publishViewCount()
 	return nil
 }
-func (a *App) publishViewCount() {
-	vs, e := a.Store.Views()
-	if e == nil {
-		a.Mux.Run(true, "set-option", "-g", "@ss_views", fmt.Sprint(len(vs)))
-	}
-}
+func (a *App) publishViewCount() { a.PublishTabs() }
 
 // SortedViews orders views by name, as F7 and Ctrl+Shift+arrows walk them.
 func (a *App) SortedViews() ([]store.View, error) {
 	vs, e := a.Store.Views()
+	return sortViews(vs), e
+}
+
+func sortViews(vs []store.View) []store.View {
 	sort.SliceStable(vs, func(i, j int) bool { return strings.ToLower(vs[i].Name) < strings.ToLower(vs[j].Name) })
-	return vs, e
+	return vs
 }
 func (a *App) RememberView(id string) {
 	platform.ReplaceFile(filepath.Join(a.Paths.Config, "last-view"), []byte(id+"\n"))

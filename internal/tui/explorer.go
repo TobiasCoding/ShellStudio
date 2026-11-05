@@ -5,6 +5,7 @@ import (
 	"container/heap"
 	"encoding/json"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
 	"path"
@@ -14,8 +15,12 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode"
 
+	"github.com/mattn/go-runewidth"
 	"shellstudio/internal/app"
+	"shellstudio/internal/i18n"
+	"shellstudio/internal/theme"
 )
 
 type row struct {
@@ -64,14 +69,7 @@ func treeRows(root string, expanded map[string]bool) []row {
 			children = append(children, child{en.Name(), en.IsDir()})
 		}
 		sort.SliceStable(children, func(i, j int) bool {
-			if children[i].dir != children[j].dir {
-				return children[i].dir
-			}
-			a, b := strings.ToLower(children[i].name), strings.ToLower(children[j].name)
-			if a != b {
-				return a < b
-			}
-			return children[i].name < children[j].name
+			return lessEntry(children[i].name, children[i].dir, children[j].name, children[j].dir)
 		})
 		prefix := ""
 		if it.rel != "." {
@@ -82,6 +80,19 @@ func treeRows(root string, expanded map[string]bool) []row {
 		}
 	}
 	return rows
+}
+
+// lessEntry is the order of a folder's entries: folders first, then by name
+// ignoring case.
+func lessEntry(a string, aDir bool, b string, bDir bool) bool {
+	if aDir != bDir {
+		return aDir
+	}
+	la, lb := strings.ToLower(a), strings.ToLower(b)
+	if la != lb {
+		return la < lb
+	}
+	return a < b
 }
 
 // The search does not enter noisy or huge folders; it does list them.
@@ -151,7 +162,19 @@ func lessHit(a, b hit) bool {
 
 // searchPaths: every word must appear in the path; those in the name first.
 func searchPaths(catalog []indexed, query string) []row {
+	list, _ := searchHits(catalog, query)
+	out := make([]row, len(list))
+	for i, x := range list {
+		out[i] = row{x.rel, 0, x.dir}
+	}
+	return out
+}
+
+// searchHits returns the best searchLimit matches, best first, and how many
+// paths match in all.
+func searchHits(catalog []indexed, query string) ([]hit, int) {
 	terms := strings.Fields(strings.ToLower(query))
+	total := 0
 	h := &hits{}
 	for _, it := range catalog {
 		ok := true
@@ -164,6 +187,7 @@ func searchPaths(catalog []indexed, query string) []row {
 		if !ok {
 			continue
 		}
+		total++
 		name := it.folded[strings.LastIndex(it.folded, "/")+1:]
 		inName := true
 		for _, t := range terms {
@@ -179,11 +203,136 @@ func searchPaths(catalog []indexed, query string) []row {
 	}
 	list := []hit(*h)
 	sort.Slice(list, func(i, j int) bool { return lessHit(list[i], list[j]) })
-	out := make([]row, len(list))
-	for i, x := range list {
-		out[i] = row{x.rel, 0, x.dir}
+	return list, total
+}
+
+// treeFilter is the tree reduced to a search: the matches and every folder
+// above them, open, in tree order.
+type treeFilter struct {
+	rows      []row
+	matched   map[string]bool
+	best      string   // The best ranked match, selected first.
+	terms     []string // Empty when there is no filter.
+	truncated bool     // More than searchLimit paths match.
+}
+
+// filterTree keeps the searchLimit best matches of searchPaths and adds their
+// ancestors, without reading the disk. An empty query is no filter.
+func filterTree(catalog []indexed, query string) treeFilter {
+	terms := strings.Fields(strings.ToLower(query))
+	if len(terms) == 0 {
+		return treeFilter{}
 	}
-	return out
+	found, total := searchHits(catalog, query)
+	f := treeFilter{matched: map[string]bool{}, terms: terms, truncated: total > len(found)}
+	if len(found) == 0 {
+		return f
+	}
+	f.best = found[0].rel
+	dirs := map[string]bool{".": true}
+	for _, x := range found {
+		f.matched[x.rel] = true
+		dirs[x.rel] = dirs[x.rel] || x.dir
+		parts := strings.Split(x.rel, "/")
+		for i := 1; i < len(parts); i++ {
+			dirs[strings.Join(parts[:i], "/")] = true
+		}
+	}
+	children := map[string][]string{}
+	for rel := range dirs {
+		if rel != "." {
+			parent := path.Dir(rel)
+			children[parent] = append(children[parent], rel)
+		}
+	}
+	for _, list := range children {
+		sort.Slice(list, func(i, j int) bool {
+			return lessEntry(path.Base(list[i]), dirs[list[i]], path.Base(list[j]), dirs[list[j]])
+		})
+	}
+	var walk func(rel string, depth int)
+	walk = func(rel string, depth int) {
+		f.rows = append(f.rows, row{rel, depth, dirs[rel]})
+		for _, c := range children[rel] {
+			walk(c, depth+1)
+		}
+	}
+	walk(".", 0)
+	return f
+}
+
+// matchSpans marks the runes of name that belong to a search term, comparing
+// rune by rune so a case change that alters the byte length cannot misplace it.
+func matchSpans(name string, terms []string) []bool {
+	low := []rune(name)
+	for i, r := range low {
+		low[i] = unicode.ToLower(r)
+	}
+	mask := make([]bool, len(low))
+	for _, t := range terms {
+		tr := []rune(t)
+		if len(tr) == 0 {
+			continue
+		}
+		for i := 0; i+len(tr) <= len(low); i++ {
+			same := true
+			for j, r := range tr {
+				if low[i+j] != r {
+					same = false
+					break
+				}
+			}
+			if same {
+				for j := range tr {
+					mask[i+j] = true
+				}
+			}
+		}
+	}
+	return mask
+}
+
+var (
+	matchStyle         = Style{Fg: theme.Amber, Attr: AttrBold}
+	matchSelectedStyle = Style{Fg: theme.Amber, Bg: theme.Selection, Attr: AttrBold}
+)
+
+// drawTreeRow paints prefix and name in w columns from (y, x); the runes of
+// name set in mask take the match style.
+func drawTreeRow(s *Screen, y, x, w int, prefix, name string, mask []bool, base, match Style) {
+	if w <= 0 {
+		return
+	}
+	if base.fills() {
+		s.DrawAt(y, x, strings.Repeat(" ", w), base)
+	}
+	col := x
+	put := func(r rune, st Style) bool {
+		rw := runewidth.RuneWidth(r)
+		if rw == 0 {
+			return true
+		}
+		if col+rw > x+w {
+			return false
+		}
+		s.DrawAt(y, col, string(r), st)
+		col += rw
+		return true
+	}
+	for _, r := range clean(prefix) {
+		if !put(r, base) {
+			return
+		}
+	}
+	for i, r := range []rune(clean(name)) {
+		st := base
+		if i < len(mask) && mask[i] {
+			st = match
+		}
+		if !put(r, st) {
+			return
+		}
+	}
 }
 
 // preview shows a regular file inside the view folder, up to 128 KiB.
@@ -196,16 +345,16 @@ func preview(s *Screen, root, rel string) {
 		if e == nil {
 			fi, _ := f.Stat()
 			if fi == nil || !fi.Mode().IsRegular() {
-				lines = []string{"Not a regular file."}
+				lines = []string{i18n.T("ui.tree.not_regular")}
 			} else {
 				raw, _ := io.ReadAll(io.LimitReader(f, 128*1024+1))
 				if strings.ContainsRune(string(raw), 0) {
-					lines = []string{"Binary file."}
+					lines = []string{i18n.T("ui.tree.binary")}
 				} else {
 					text := string(raw[:min(len(raw), 128*1024)])
 					lines = strings.Split(strings.ReplaceAll(strings.ToValidUTF8(text, "�"), "\r\n", "\n"), "\n")
 					if len(raw) > 128*1024 {
-						lines = append(lines, "[Preview limited to 128 KiB]")
+						lines = append(lines, i18n.T("ui.tree.limited"))
 					}
 				}
 			}
@@ -223,7 +372,7 @@ func preview(s *Screen, root, rel string) {
 		for i := top; i < len(lines) && i < top+count; i++ {
 			s.Draw(2+i-top, strings.ReplaceAll(lines[i], "\t", "    "), Normal)
 		}
-		s.Draw(s.H-1, "Esc: tree | ↑↓ read", Normal)
+		s.Draw(s.H-1, i18n.T("ui.tree.preview"), Normal)
 		s.Refresh()
 		ev := s.Read(-1)
 		if ev.Kind == MouseEvent {
@@ -249,8 +398,13 @@ func preview(s *Screen, root, rel string) {
 	}
 }
 
-var treeShortcuts = []struct{ label, action string }{{"F2 Menu", "menu"}, {"F3 New", "new"},
-	{"F5 Arrange", "arrange"}, {"F9 Kill", "kill"}, {"F7 Views", "views"}, {"F10 Leave", "leave"}}
+type treeShortcut struct{ label, action string }
+
+// treeShortcuts are the clickable lines under the tree, in the current language.
+func treeShortcuts() []treeShortcut {
+	return []treeShortcut{{i18n.T("ui.tree.menu"), "menu"}, {i18n.T("ui.tree.new"), "new"},
+		{i18n.T("ui.tree.arrange"), "arrange"}, {i18n.T("ui.tree.kill"), "kill"}, {i18n.T("ui.tree.views"), "views"}, {i18n.T("ui.tree.leave"), "leave"}}
+}
 
 // Explorer is the file tree on the left of every view.
 func Explorer(a *app.App, view string) error {
@@ -258,13 +412,30 @@ func Explorer(a *app.App, view string) error {
 	if e != nil {
 		return e
 	}
-	root := v.Folder
 	s, e := Open(true)
 	if e != nil {
 		return e
 	}
+	defer s.Close()
+	explore(a, view, v.Folder, v.Tree, s, func(flush func()) {
+		// Closing the pane (kill-pane) sends SIGHUP: save before leaving.
+		stop := make(chan os.Signal, 2)
+		signal.Notify(stop, syscall.SIGHUP, syscall.SIGTERM)
+		go func() {
+			<-stop
+			flush()
+			s.Close()
+			os.Exit(0)
+		}()
+	})
+	return nil
+}
+
+// explore runs the tree of a view on s. onStart, when given, receives the
+// function that saves the tree state before leaving.
+func explore(a *app.App, view, root, tree string, s *Screen, onStart func(flush func())) {
 	var st treeState
-	json.Unmarshal([]byte(v.Tree), &st)
+	json.Unmarshal([]byte(tree), &st)
 	expanded := map[string]bool{".": true}
 	if st.Expanded != nil {
 		expanded = map[string]bool{}
@@ -281,11 +452,19 @@ func Explorer(a *app.App, view string) error {
 	scanned := time.Now()
 	pane := os.Getenv("TMUX_PANE")
 	message := ""
-	// Search: nil is the tree; a string (even empty) is the active search.
+	// Search: nil is the tree; a string (even empty) is the active search,
+	// typed in the field of row 1. A non-empty search filters the tree.
 	var query *string
+	field := Field{Placeholder: i18n.T("explorer.search")}
+	var filter treeFilter
 	var catalog []indexed
 	var indexedAt time.Time
-	treeSelected := selected
+	// The tree as the search found it, restored by Esc.
+	treeSelected, treeOffset := selected, offset
+	var treeExpanded map[string]bool
+	// follow keeps the selected row in sight; scrolling with the bar does not.
+	follow := true
+	dragging := false
 	// Double click is detected here: tmux passes both clicks to the program.
 	lastPress, lastAt := "", time.Time{}
 	swallowRelease := false
@@ -303,11 +482,11 @@ func Explorer(a *app.App, view string) error {
 	persist := func() {
 		// Saving when idle, not on every key: walking the tree with the arrows
 		// does not rewrite the configuration dozens of times per second.
-		sel := selected
+		sel, off := selected, offset
 		if query != nil {
-			sel = treeSelected
+			sel, off = treeSelected, treeOffset
 		}
-		b, _ := json.Marshal(treeState{sortedExpanded(), sel, offset})
+		b, _ := json.Marshal(treeState{sortedExpanded(), sel, off})
 		if string(b) == saved || !saving.CompareAndSwap(false, true) {
 			return
 		}
@@ -337,45 +516,61 @@ func Explorer(a *app.App, view string) error {
 		}
 	}
 	saved = func() string { b, _ := json.Marshal(treeState{sortedExpanded(), selected, offset}); return string(b) }()
-	// Closing the pane (kill-pane) sends SIGHUP: save before leaving.
-	stop := make(chan os.Signal, 2)
-	signal.Notify(stop, syscall.SIGHUP, syscall.SIGTERM)
-	go func() {
-		<-stop
-		flush()
-		s.Close()
-		os.Exit(0)
-	}()
-	defer func() { flush(); s.Close() }()
+	if onStart != nil {
+		onStart(flush)
+	}
+	defer flush()
 	startSearch := func() {
-		treeSelected = selected
+		treeSelected, treeOffset, treeExpanded = selected, offset, maps.Clone(expanded)
 		if catalog == nil || time.Since(indexedAt) > 30*time.Second {
-			s.Draw(1, "Indexing…", Highlight)
+			s.Draw(1, i18n.T("ui.tree.indexing"), Highlight)
 			s.Refresh()
 			catalog, indexedAt = fileIndex(root), time.Now()
 		}
 		q := ""
+		query, filter = &q, treeFilter{}
+		field.Set("")
+		field.Focused = true
+	}
+	endSearch := func() {
+		query, filter = nil, treeFilter{}
+		field.Set("")
+		field.Focused = false
+		if treeExpanded != nil {
+			expanded, treeExpanded = treeExpanded, nil
+		}
+	}
+	refilter := func() {
+		q := field.Text()
 		query = &q
+		filter = filterTree(catalog, q)
+		if len(filter.terms) > 0 {
+			rows, selected, offset = filter.rows, filter.best, 0
+		} else {
+			rows, selected, offset = treeRows(root, expanded), treeSelected, treeOffset
+		}
+		follow = true
 	}
 	reveal := func(target string) {
 		// Leaving the search shows the result in the tree.
+		endSearch()
 		parts := strings.Split(target, "/")
 		expanded["."] = true
 		for i := 1; i < len(parts); i++ {
 			expanded[strings.Join(parts[:i], "/")] = true
 		}
-		query, selected = nil, target
+		selected, follow = target, true
 		rows, scanned = treeRows(root, expanded), time.Now()
 	}
 	edit := func(rel string, dir bool) string {
 		if dir {
-			return "It is a folder."
+			return i18n.T("ui.tree.folder")
 		}
 		if _, e := a.OpenEditor(view, rel); e != nil {
 			a.RecordError(e, "Explorer: edit file")
 			return e.Error()
 		}
-		return "In nano; leaving it closes the console."
+		return i18n.T("ui.tree.in_nano")
 	}
 	shortcut := func(action string) error {
 		client := ""
@@ -383,7 +578,7 @@ func Explorer(a *app.App, view string) error {
 			client = a.ExplorerClient(pane, view)
 		}
 		if client == "" {
-			return errorf("the view client could not be identified")
+			return errorf(i18n.T("ui.tree.no_client"))
 		}
 		if action == "leave" {
 			_, e := a.Mux.Run(true, "detach-client", "-t", client)
@@ -402,13 +597,15 @@ func Explorer(a *app.App, view string) error {
 		}
 		return a.OpenDialog(action, client, target)
 	}
+	shortcuts := treeShortcuts()
+	closeButton, fixButton := i18n.T("ui.tree.err_close"), i18n.T("ui.tree.err_fix")
 	for {
 		item := a.CurrentError()
 		var errorLines []string
 		if item != nil {
 			errorLines = Wrap(item.Context+": "+item.Message, max(8, s.W-3))
 			if len(errorLines) == 0 {
-				errorLines = []string{"Error"}
+				errorLines = []string{i18n.T("ui.tree.error")}
 			}
 			if len(errorLines) > 5 {
 				errorLines = errorLines[:5]
@@ -416,7 +613,7 @@ func Explorer(a *app.App, view string) error {
 				errorLines[4] = string(r[:max(0, len(r)-1)]) + "…"
 			}
 		}
-		shortcutsTop := s.H - len(treeShortcuts)
+		shortcutsTop := s.H - len(shortcuts)
 		statusRows, errorRows := 0, 0
 		if message != "" {
 			statusRows = 1
@@ -427,6 +624,13 @@ func Explorer(a *app.App, view string) error {
 		errorTop := shortcutsTop - statusRows - errorRows
 		errorButtonY := errorTop + 2 + len(errorLines)
 		count := max(1, errorTop-2)
+		filtering := query != nil && len(filter.terms) > 0
+		// The notice of a cut list takes the last row of the tree.
+		truncRow := -1
+		if filtering && filter.truncated && count > 1 {
+			count--
+			truncRow = 2 + count
+		}
 		index := 0
 		for i, r := range rows {
 			if r.rel == selected {
@@ -436,67 +640,77 @@ func Explorer(a *app.App, view string) error {
 		if len(rows) > 0 {
 			selected = rows[index].rel
 		}
-		offset = min(offset, max(0, len(rows)-count))
-		offset = max(0, min(offset, index))
-		if index >= offset+count {
-			offset = index - count + 1
+		offset = max(0, min(offset, len(rows)-count))
+		if follow {
+			offset = min(offset, index)
+			if index >= offset+count {
+				offset = index - count + 1
+			}
+		}
+		// The scrollbar takes the last column the screen draws.
+		bar := len(rows) > count
+		barX, width := s.W-2, s.W-2
+		if bar {
+			width--
 		}
 		s.Erase()
-		s.Header(" FILES ▾ ")
-		if query == nil {
-			s.Draw(1, "/ Search", Dim)
-		} else {
-			s.Draw(1, "/ "+*query+"_", Highlight)
-		}
+		// ARCHIVOS on the left and its menu ▼ at the right edge, as in the
+		// console headers (a click anywhere on the header opens the menu).
+		title := " " + i18n.T("explorer.title")
+		s.Header(title + strings.Repeat(" ", max(1, s.W-3-runewidth.StringWidth(title))) + theme.Glyphs.Menu + " ")
+		s.DrawAt(0, 0, title, HeaderBar.With(AttrBold))
+		field.Draw(s, 1, 1, s.W-2)
 		for i := offset; i < len(rows) && i < offset+count; i++ {
 			r := rows[i]
-			var label string
-			if query != nil && *query != "" {
-				parent, leaf := path.Split(r.rel)
-				label = leaf
-				if r.dir {
-					label += "/"
+			marker := "  "
+			if r.dir {
+				open := expanded[r.rel]
+				if filtering {
+					// The filter opens the folders of its matches only.
+					open = i+1 < len(rows) && rows[i+1].depth > r.depth
 				}
-				if parent != "" {
-					label += "  " + strings.TrimSuffix(parent, "/")
+				marker = "▸ "
+				if open {
+					marker = "▾ "
 				}
-			} else {
-				marker := "  "
-				if r.dir {
-					marker = "▸ "
-					if expanded[r.rel] {
-						marker = "▾ "
-					}
-				}
-				leaf := path.Base(r.rel)
-				if r.rel == "." {
-					leaf = filepath.Base(root)
-				}
-				label = strings.Repeat("  ", r.depth) + marker + leaf
 			}
-			style := Normal
+			leaf := path.Base(r.rel)
+			if r.rel == "." {
+				leaf = filepath.Base(root)
+			}
+			var mask []bool
+			if filtering && filter.matched[r.rel] {
+				mask = matchSpans(leaf, filter.terms)
+			}
+			base, match := Normal, matchStyle
 			if i == index {
-				style = Highlight
+				base, match = Highlight, matchSelectedStyle
 			}
-			s.Draw(i-offset+2, label, style)
+			drawTreeRow(s, i-offset+2, 1, width, strings.Repeat("  ", r.depth)+marker, leaf, mask, base, match)
 		}
-		if query != nil && *query != "" && len(rows) == 0 {
-			s.Draw(2, "No results.", Normal)
+		if bar {
+			Scrollbar(s, 2, barX, count, len(rows), count, offset)
+		}
+		if filtering && len(rows) == 0 {
+			s.DrawAt(2, 1, runewidth.Truncate(i18n.T("explorer.no_match"), max(0, s.W-2), "…"), Muted)
+		}
+		if truncRow >= 0 {
+			s.DrawAt(truncRow, 1, runewidth.Truncate(i18n.T("explorer.truncated", searchLimit), max(0, s.W-2), "…"), Muted)
 		}
 		if item != nil {
 			sep := strings.Repeat("─", max(0, s.W-2))
 			s.Draw(errorTop, sep, Dim)
-			s.Draw(errorTop+1, "APP ERRORS", Bold)
+			s.Draw(errorTop+1, i18n.T("ui.tree.errors"), Bold)
 			for i, l := range errorLines {
 				s.Draw(errorTop+2+i, l, Normal)
 			}
-			s.Draw(errorButtonY, "[X] Close  [F] Fix this", Highlight)
+			s.Draw(errorButtonY, closeButton+"  "+fixButton, Highlight)
 			s.Draw(errorButtonY+1, sep, Dim)
 		}
 		if message != "" {
 			s.Draw(shortcutsTop-1, message, Normal)
 		}
-		for i, sc := range treeShortcuts {
+		for i, sc := range shortcuts {
 			s.Draw(shortcutsTop+i, sc.label, Dim)
 		}
 		s.Refresh()
@@ -505,6 +719,19 @@ func Explorer(a *app.App, view string) error {
 		// caused it does not erase it.
 		if ev.Kind == KeyEvent || ev.Kind == PasteEvent {
 			message = ""
+		}
+		// Dragging the scrollbar thumb. tmux may keep the release for itself,
+		// so a press or a key ends the drag as well; holding still does not.
+		if dragging && ev.Kind != TimeoutEvent && ev.Kind != ResizeEvent {
+			if ev.Kind == MouseEvent && ev.Motion && ev.Button == 0 {
+				offset = ScrollOffset(ev.Y-2, count, len(rows), count)
+				continue
+			}
+			dragging = false
+			s.TrackDrag(false)
+			if ev.Kind == MouseEvent && ev.Release {
+				continue
+			}
 		}
 		if ev.Kind == TimeoutEvent || ev.Kind == ResizeEvent {
 			persist()
@@ -517,7 +744,7 @@ func Explorer(a *app.App, view string) error {
 		press, release := ev.Left()
 		if (press || release) && ev.X >= 1 && ev.X < s.W-1 && ev.Y >= shortcutsTop && ev.Y < s.H {
 			if release {
-				if e := shortcut(treeShortcuts[ev.Y-shortcutsTop].action); e != nil {
+				if e := shortcut(shortcuts[ev.Y-shortcutsTop].action); e != nil {
 					a.RecordError(e, "Explorer shortcut")
 					message = e.Error()
 				}
@@ -532,9 +759,11 @@ func Explorer(a *app.App, view string) error {
 			case ev.Is("f", "F"):
 				button = "agent"
 			case release && ev.Y == errorButtonY:
-				if ev.X >= 1 && ev.X < 12 {
+				// "[X] Close" from column 1, two spaces, then "[F] Fix this".
+				closeEnd := 1 + runewidth.StringWidth(closeButton) + 2
+				if ev.X >= 1 && ev.X < closeEnd {
 					button = "close"
-				} else if ev.X >= 13 && ev.X < s.W-1 {
+				} else if ev.X >= closeEnd+1 && ev.X < s.W-1 {
 					button = "agent"
 				}
 			}
@@ -546,7 +775,7 @@ func Explorer(a *app.App, view string) error {
 					message = e.Error()
 				} else {
 					a.FocusConsole(view, c.ID)
-					message = "Sent to " + c.Name + "."
+					message = i18n.T("ui.tree.sent", c.Name)
 				}
 				continue
 			}
@@ -561,13 +790,13 @@ func Explorer(a *app.App, view string) error {
 				}
 				switch {
 				case chosen == nil || !chosen.dir:
-					message = "First click the destination folder."
+					message = i18n.T("ui.tree.pick_folder")
 				case pane == "":
-					message = "The tree panel could not be identified."
+					message = i18n.T("ui.tree.no_panel")
 				default:
 					client := a.ExplorerClient(pane, view)
 					if client == "" {
-						message = "Your SSH connection could not be identified."
+						message = i18n.T("ui.tree.no_ssh")
 						break
 					}
 					persist()
@@ -575,47 +804,26 @@ func Explorer(a *app.App, view string) error {
 						a.RecordError(e, "Explorer: upload file")
 						message = e.Error()
 					} else {
-						message = "SCP command prepared for that folder."
+						message = i18n.T("ui.tree.scp_ready")
 					}
 				}
 				continue
 			}
 		}
-		// With the search open, letters are the search.
-		if query != nil && ev.Kind == KeyEvent {
-			k := ev.Key
-			r := []rune(k)
-			if k == "backspace" || (len(r) == 1 && r[0] >= ' ') {
-				q := *query
-				if k == "backspace" {
-					if qr := []rune(q); len(qr) > 0 {
-						q = string(qr[:len(qr)-1])
-					}
-				} else {
-					q += k
-				}
-				query = &q
-				if q != "" {
-					rows = searchPaths(catalog, q)
-					selected, offset = "", 0
-					if len(rows) > 0 {
-						selected = rows[0].rel
-					}
-				} else {
-					rows, selected = treeRows(root, expanded), treeSelected
+		// With the search open, letters and pastes edit the field; up, down,
+		// Enter and Esc still reach the tree.
+		if query != nil && (ev.Kind == KeyEvent || ev.Kind == PasteEvent) {
+			if consumed, changed := field.Handle(ev); consumed {
+				if changed {
+					refilter()
 				}
 				continue
 			}
-		}
-		if query != nil && ev.Kind == PasteEvent {
-			q := *query + strings.ReplaceAll(ev.Text, "\n", " ")
-			query = &q
-			rows = searchPaths(catalog, q)
-			continue
 		}
 		key := ev.Key
 		if ev.Kind == KeyEvent && key == "esc" && query != nil {
-			query, selected = nil, treeSelected
+			endSearch()
+			selected, offset, follow = treeSelected, treeOffset, true
 			rows, scanned = treeRows(root, expanded), time.Now()
 			continue
 		}
@@ -629,6 +837,12 @@ func Explorer(a *app.App, view string) error {
 				key = "up"
 			case ev.Button == 65 && ev.Press:
 				key = "down"
+			case press && bar && ev.X == barX && ev.Y >= 2 && ev.Y < 2+count:
+				// Button motion is reported only while the thumb is held.
+				dragging, follow = true, false
+				s.TrackDrag(true)
+				offset = ScrollOffset(ev.Y-2, count, len(rows), count)
+				continue
 			case ev.Y == 1 && press && query == nil:
 				startSearch()
 				continue
@@ -728,7 +942,7 @@ func Explorer(a *app.App, view string) error {
 				message = edit(r.rel, r.dir)
 			case "n", "N":
 				leaf := path.Base(r.rel)
-				name, ok := Prompt(s, "Rename", r.rel, leaf, 255, "")
+				name, ok := Prompt(s, i18n.T("ui.tree.rename"), r.rel, leaf, 255, "")
 				if ok && name != "" && name != leaf {
 					renamed, e := app.RenamePath(root, r.rel, name)
 					if e != nil {
@@ -746,7 +960,7 @@ func Explorer(a *app.App, view string) error {
 						}
 					}
 					expanded, selected, rescan, catalog = moved, renamed, true, nil
-					message = "Renamed."
+					message = i18n.T("ui.tree.renamed")
 				}
 			case "i", "I", "insert":
 				if pane != "" {
@@ -756,9 +970,9 @@ func Explorer(a *app.App, view string) error {
 						a.RecordError(e, "Explorer: insert path")
 						message = e.Error()
 					case done:
-						message = "Path written."
+						message = i18n.T("ui.tree.path_typed")
 					default:
-						message = "No console in the view."
+						message = i18n.T("ui.tree.no_console")
 					}
 				}
 			}
@@ -767,19 +981,8 @@ func Explorer(a *app.App, view string) error {
 		if rescan || len(expanded) != before {
 			rows, scanned = treeRows(root, expanded), time.Now()
 		}
-		index = 0
-		for i, x := range rows {
-			if x.rel == selected {
-				index = i
-			}
-		}
-		if len(rows) > 0 {
-			selected = rows[index].rel
-		}
-		offset = max(0, min(offset, index))
-		if index >= offset+count {
-			offset = index - count + 1
-		}
+		// The next frame scrolls to the selected row.
+		follow = true
 	}
 }
 

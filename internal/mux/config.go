@@ -4,6 +4,9 @@ package mux
 import (
 	"fmt"
 	"strings"
+
+	"shellstudio/internal/i18n"
+	"shellstudio/internal/theme"
 )
 
 // The header of each console is the status line of the programs server, at the
@@ -13,14 +16,37 @@ import (
 // Focus arrives through focus events, enabled on both servers.
 const focused = "#{m:*focused*,#{client_flags}}"
 
-var header = "#[fg=#{?" + focused + ",black,colour250},bg=#{?" + focused + ",cyan,colour235}]" +
-	"#{?" + focused + ",#[bold] >> ACTIVE: ,    }#{?#{@ss_name},#{@ss_name},#{session_name}} ▾ " +
-	"#{?" + focused + ",<< ,}" +
-	"#{?pane_dead,#[fg=black#,bg=yellow#,bold] FINISHED · Enter: options ,}#[default]"
+// header is the status line of every nested client: "Kind · Name", the
+// finished badge and, at the right, the tag and the buttons ─ □ ▼ in fixed
+// slots (HeaderButtons). The focused console takes the accent background.
+// It is built when the controls are applied, in the current language.
+func headerFormat() string {
+	cond := func(a, b string) string { return "#{?" + focused + "," + a + "," + b + "}" }
+	bg := cond(theme.Colour(theme.Accent), theme.Colour(theme.HeaderBg))
+	fg := cond(theme.Colour(theme.White), theme.Colour(theme.HeaderFg))
+	base := "#[fg=" + fg + "]#[bg=" + bg + "]#[nobold]"
+	label := "#{?#{@ss_label},#{@ss_label},#{?#{@ss_name},#{@ss_name},#{session_name}}}"
+	g := func(u, a string) string { return theme.TmuxGlyph(u, a) }
+	return "#[fill=" + bg + "]" + base + cond("#[bold]", "") + " " + label + " " + base +
+		"#{?pane_dead,#[fg=black#,bg=yellow#,bold] " + i18n.T("tmux.header.finished") + " ,}" + base +
+		"#[align=right]#{?#{@ss_tag},#[fg=#{@ss_tag_fg}#,bg=#{@ss_tag_color}] #{@ss_tag} ,}" + base +
+		" " + g(theme.Glyphs.Minimize, theme.ASCII.Minimize) + "  " + g(theme.Glyphs.Maximize, theme.ASCII.Maximize) +
+		"  " + g(theme.Glyphs.Menu, theme.ASCII.Menu) + " "
+}
 
-const dead = "#[fg=black,bg=yellow,bold] Finished " +
-	"#{?pane_dead_signal,(signal #{pane_dead_signal}),#{?pane_dead_status,(exit #{pane_dead_status}),}} #[default] " +
-	"Enter or click: restart · rename · close panel · kill console"
+// HeaderButtons are the slots of the header buttons, counted in columns from
+// the right edge of the pane (0 is the last column): ▼ menu, □ maximize and
+// ─ minimize. Clicks there act at once and never start a drag.
+var HeaderButtons = []struct {
+	Action string
+	Lo, Hi int
+}{{"menu", 0, 2}, {"maximize", 3, 5}, {"minimize", 6, 8}}
+
+func deadFormat() string {
+	return "#[fg=black,bg=yellow,bold] " + i18n.T("tmux.dead.finished") + " " +
+		"#{?pane_dead_signal,(" + i18n.T("tmux.dead.signal") + " #{pane_dead_signal}),#{?pane_dead_status,(" + i18n.T("tmux.dead.exit") + " #{pane_dead_status}),}} #[default] " +
+		i18n.T("tmux.dead.options")
+}
 
 // Dragging from the explorer onto a console types the path, as in VS Code
 // terminals; dragging a console header onto another console swaps them. tmux
@@ -48,13 +74,13 @@ var LayoutKeys = []struct{ Key, Layout, Label string }{
 	{"4", "main-vertical", "Active on the left"}, {"5", "main-horizontal", "Active on top"},
 }
 
+// LayoutLabel is the translated name of a layout, for display. Unknown
+// layouts show as the grid.
 func LayoutLabel(l string) string {
-	for _, k := range LayoutKeys {
-		if k.Layout == l {
-			return k.Label
-		}
+	if !ValidLayout(l) {
+		l = "tiled"
 	}
-	return "Grid"
+	return i18n.T("layout." + l)
 }
 func ValidLayout(v string) bool {
 	for _, k := range LayoutKeys {
@@ -126,12 +152,12 @@ func commonOptions() [][]string {
 		// slot after tmux's defaults instead of appending duplicate overrides.
 		{"set-option", "-s", "terminal-overrides[1]", `*:Ms=\E]52;%?%p1%l%t%p1%s%ec%;;%p2%s\007`},
 		setg("window-style", "fg=white,"+black), setg("window-active-style", "fg=white,"+black),
-		setg("status-style", "fg=white,"+black), setg("pane-border-style", "fg=colour240,"+black),
-		setg("pane-active-border-style", "fg=cyan,"+black), setg("message-style", "fg=white,"+black),
+		setg("status-style", "fg=white,"+black), setg("pane-border-style", "fg="+theme.Colour(theme.Border)+","+black),
+		setg("pane-active-border-style", "fg="+theme.Colour(theme.Accent)+","+black+",bold"), setg("message-style", "fg=white,"+black),
 		setg("message-command-style", "fg=cyan,"+black), setg("mode-style", "fg=cyan,"+black+",bold"),
 		setg("status-left-style", "fg=cyan,"+black+",bold"), setg("status-right-style", "fg=white,"+black),
 		setg("window-status-style", "fg=white,"+black), setg("window-status-current-style", "fg=cyan,"+black+",bold"),
-		setg("popup-style", "fg=white,"+black), setg("popup-border-style", "fg=cyan,"+black),
+		setg("popup-style", "fg=white,"+black), setg("popup-border-style", "fg="+theme.Colour(theme.Accent)+","+black),
 		setg("status", "off"),
 		{"set-option", "-s", "extended-keys", "on"},
 		{"set-option", "-s", "focus-events", "on"},
@@ -151,13 +177,13 @@ func (m *Mux) deadMenu(position string) []string {
 	dialog := func(action string) string {
 		return "run-shell -b " + Quote(m.Self("_dialog", action)+` --tty "#{client_tty}"`)
 	}
-	return []string{"display-menu", "-O", "-T", "#[align=centre] #{@ss_name} finished ",
+	return []string{"display-menu", "-O", "-T", "#[align=centre] #{@ss_name} " + i18n.T("tmux.dead.title") + " ",
 		"-x", position, "-y", position,
-		"Restart", "r", "respawn-pane -k",
-		"Rename", "n", dialog("rename"),
+		i18n.T("tmux.restart"), "r", "respawn-pane -k",
+		i18n.T("tmux.rename"), "n", dialog("rename"),
 		"",
-		"Close panel (the console stays in the list)", "q", m.RunAction("remove --tty #{client_tty}"),
-		"Kill console", "m", dialog("kill")}
+		i18n.T("tmux.close_listed"), "q", m.RunAction("remove --tty #{client_tty}"),
+		i18n.T("tmux.kill"), "m", dialog("kill")}
 }
 
 // ProgramsControls belong to the programs server: header and finished consoles.
@@ -168,7 +194,7 @@ func (m *Mux) ProgramsControls() [][]string {
 		// mouse event in one piece, so Escape needs no network margin here.
 		[]string{"set-option", "-sg", "escape-time", "10"},
 		setg("prefix", "None"), setg("status", "on"), setg("status-position", "top"),
-		setg("status-format[0]", header))
+		setg("status-format[0]", headerFormat()))
 	// The hook runs without a client: without -t, tmux would redraw the last one used.
 	for _, hook := range []string{"client-focus-in", "client-focus-out"} {
 		cmds = append(cmds, []string{"set-hook", "-g", hook, Script([]string{"run-shell", "-C", `refresh-client -S -t "#{hook_client}"`})})
@@ -176,7 +202,7 @@ func (m *Mux) ProgramsControls() [][]string {
 	// tmux does not redraw the status line when a pane dies: the header would
 	// say the console is alive until the next focus change.
 	cmds = append(cmds, []string{"set-hook", "-g", "pane-died", Script([]string{"run-shell", "-C", "#{L:refresh-client -S -t #{client_name} ; }"})},
-		setg("remain-on-exit-format", dead),
+		setg("remain-on-exit-format", deadFormat()),
 		// They only change something in a finished pane; otherwise the key is unchanged.
 		[]string{"bind-key", "-n", "Enter", "if-shell", "-F", "#{pane_dead}", Join(m.deadMenu("C")...), "send-keys Enter"},
 		[]string{"bind-key", "-n", "MouseDown1Pane", "if-shell", "-F", "#{pane_dead}",
@@ -197,6 +223,8 @@ type Sizes struct {
 	ArrangeW, ArrangeRows     int
 	BrowseW, BrowseRows       int
 	Views                     int
+	// TopMenus are the entries of the top bar menus: new, arrange and more.
+	TopMenus map[string][]MenuEntry
 }
 
 // Fit is min(size, limit) as a tmux format: -w and -h cannot exceed the terminal.
@@ -239,11 +267,15 @@ func (m *Mux) ViewsControls(s Sizes) [][]string {
 		[]string{"set-hook", "-g", "client-attached", "run-shell " + Quote(m.Self("_resize_window", "--client", "#{hook_client}", "--immediate"))},
 		[]string{"set-hook", "-g", "client-session-changed", "run-shell " + Quote(m.Self("_resize_window", "--client", "#{hook_client}", "--immediate"))},
 		[]string{"set-hook", "-gu", "client-detached"},
-		setg("status", "off"), setg("prefix", "C-b"),
+		// The top bar: views as tabs and the New console, Arrange and More
+		// menus. Window sizes leave its row (TopBarRows).
+		setg("status", "on"), setg("status-position", "top"), setg("status-interval", "0"),
+		setg("status-style", "fg="+theme.Colour(theme.HeaderFg)+",bg="+theme.Colour(theme.Panel)),
+		setg("status-format[0]", topBar()), setg("prefix", "C-b"),
 		// The header is inside each pane: the border is only a divider.
 		setg("pane-border-status", "off"), []string{"set-option", "-gu", "pane-border-format"},
-		setg("pane-active-border-style", "fg=cyan,bg=#000000,bold"), setg("pane-border-lines", "heavy"),
-		setg("remain-on-exit-format", "#[fg=black,bg=yellow,bold] This panel ended #[default] Click: redo · close panel"),
+		setg("pane-active-border-style", "fg="+theme.Colour(theme.Accent)+",bg=#000000,bold"), setg("pane-border-lines", "heavy"),
+		setg("remain-on-exit-format", "#[fg=black,bg=yellow,bold] "+i18n.T("tmux.panel_ended")+" #[default] "+i18n.T("tmux.panel_options")),
 		// A console whose nested client ended (the program was killed elsewhere
 		// or the programs server restarted) shows its options in the same pane.
 		// Only once: if that screen fails, the pane stays dead, without a loop.
@@ -289,7 +321,9 @@ func (m *Mux) ViewsControls(s Sizes) [][]string {
 	popups["rename"] = "run-shell " + Quote(m.PopupShell("rename", Fit("64", w), Fit("12", h)))
 	// Ports are counted when opening: the program measures their popup.
 	popups["ports"] = "run-shell " + Quote(m.Self("_dialog", "ports", "--client")+` "#{client_name}" --pane "#{pane_id}"`)
-	cmds = append(cmds, setg("@ss_views", itoa(s.Views)), []string{"unbind-key", "-q", "-n", "MouseDown1Status"})
+	popups["tags"] = "run-shell -b " + Quote(m.Self("_dialog", "tags", "--client")+` "#{client_name}" --pane "#{pane_id}"`)
+	cmds = append(cmds, setg("@ss_views", itoa(s.Views)))
+	cmds = append(cmds, m.topBarBindings(popups, s.TopMenus)...)
 	cmds = append(cmds, m.headerMenus(popups)...)
 	cmds = append(cmds, m.dragBindings()...)
 	for _, l := range LayoutKeys {
@@ -325,45 +359,75 @@ func (m *Mux) headerMenus(popups map[string]string) [][]string {
 	}
 	head := []string{"display-menu", "-O", "-T", "#[align=centre] #{@ss_name} ", "-t", "=", "-x", "M", "-y", "M"}
 	console := append(append([]string{}, head...),
-		"Rename", "n", popups["rename"],
-		"#{?window_zoomed_flag,Restore the layout,Zoom} (F4)", "z", "resize-pane -Z",
-		"Move before (Alt+<)", "[", viewAction("move-before"),
-		"Move after (Alt+>)", "]", viewAction("move-after"),
+		i18n.T("tmux.rename"), "n", popups["rename"],
+		i18n.T("console.description"), "d", m.RunAction(`describe --client "#{client_name}" --pane "#{pane_id}"`),
+		i18n.T("console.tag")+" ▸", "t", m.RunAction(`tagmenu --client "#{client_name}" --pane "#{pane_id}"`),
 		"",
-		"New console (F3)", "c", popups["new"],
-		"Kill and replace here", "r", popups["replace"],
-		"Forward ports to your PC", "p", popups["ports"],
-		"Close panel (the console keeps running)", "q", m.RunAction("remove --pane #{pane_id}"),
-		"Kill console (F9)", "m", popups["kill"],
+		i18n.T("console.minimize"), "-", m.RunAction("minimize --pane #{pane_id}"),
+		"#{?window_zoomed_flag,"+i18n.T("console.unmaximize")+","+i18n.T("console.maximize")+"} (F4)", "z", "resize-pane -Z",
+		i18n.T("tmux.move_before"), "[", viewAction("move-before"),
+		i18n.T("tmux.move_after"), "]", viewAction("move-after"),
 		"",
-		"View menu (F2)", "v", popups["menu"])
+		i18n.T("tmux.new_console"), "c", popups["new"],
+		i18n.T("tmux.replace"), "r", popups["replace"],
+		i18n.T("tmux.ports"), "p", popups["ports"],
+		i18n.T("tmux.close_running"), "q", m.RunAction("remove --pane #{pane_id}"),
+		i18n.T("tmux.kill_f9"), "m", popups["kill"],
+		"",
+		i18n.T("tmux.view_menu"), "v", popups["menu"])
 	tree := append(append([]string{}, head...),
-		"Search (/)", "/", "send-keys /",
-		"Edit the selection with nano (E)", "e", "send-keys E",
-		"Rename the selection (N)", "n", "send-keys N",
-		"Reload folders (R)", "r", "send-keys R",
-		"Forward ports to your PC", "p", popups["ports"],
+		i18n.T("tmux.search"), "/", "send-keys /",
+		i18n.T("tmux.edit_nano"), "e", "send-keys E",
+		i18n.T("tmux.rename_sel"), "n", "send-keys N",
+		i18n.T("tmux.reload"), "r", "send-keys R",
+		i18n.T("tmux.ports"), "p", popups["ports"],
 		"",
-		"Hide explorer", "o", m.RunAction("explorer --pane #{pane_id}"),
+		i18n.T("tmux.hide_explorer"), "o", m.RunAction("explorer --pane #{pane_id}"),
 		"",
-		"View menu (F2)", "v", popups["menu"])
+		i18n.T("tmux.view_menu"), "v", popups["menu"])
 	empty := append(append([]string{}, head...),
-		"New console (F3)", "c", popups["new"],
-		"Forward ports to your PC", "p", popups["ports"],
-		"View menu (F2)", "v", popups["menu"])
-	return [][]string{setg(menuOption+"console", Join(console...)), setg(menuOption+"tree", Join(tree...)), setg(menuOption+"empty", Join(empty...))}
+		i18n.T("tmux.new_console"), "c", popups["new"],
+		i18n.T("tmux.ports"), "p", popups["ports"],
+		i18n.T("tmux.view_menu"), "v", popups["menu"])
+	minimized := append(append([]string{}, head...),
+		i18n.T("menu.tags"), "t", popups["tags"],
+		"",
+		i18n.T("menu.toggle_minimized"), "o", "run-shell -b "+Quote(m.Self("_view", "toggle-minimized")+` --client "#{client_name}" --pane "#{pane_id}"`),
+		"",
+		i18n.T("tmux.view_menu"), "v", popups["menu"])
+	return [][]string{setg(menuOption+"console", Join(console...)), setg(menuOption+"tree", Join(tree...)), setg(menuOption+"empty", Join(empty...)),
+		setg(menuOption+"minimized", Join(minimized...))}
 }
 
 // run-shell -C expands the format (chooses the menu for the pane) and keeps the
 // mouse event: the menu appears where the click happened.
 var headerMenu = Join("run-shell", "-C", "#{?"+isConsole+",#{"+menuOption+"console},"+
-	"#{?#{==:#{@ss_kind},explorer},#{"+menuOption+"tree},#{"+menuOption+"empty}}}")
+	"#{?#{==:#{@ss_kind},explorer},#{"+menuOption+"tree},"+
+	"#{?#{==:#{@ss_kind},minimized},#{"+menuOption+"minimized},#{"+menuOption+"empty}}}}")
 
 func (m *Mux) deadPanelMenu() string {
 	return Join("display-menu", "-O", "-T", "#[align=centre] #{@ss_name} ", "-t", "=", "-x", "M", "-y", "M",
-		"Redo the panel", "r", "respawn-pane -k",
-		"Close panel", "q", m.RunAction("remove --pane #{pane_id}"))
+		i18n.T("tmux.redo_panel"), "r", "respawn-pane -k",
+		i18n.T("tmux.close_panel"), "q", m.RunAction("remove --pane #{pane_id}"))
 }
+
+// fromRight is the column of the pointer counted from the pane's right edge.
+const fromRight = "#{e|-:#{e|-:#{pane_width},1},#{mouse_x}}"
+
+// onButton is true when the pointer is on a header button (HeaderButtons).
+func onButton(action string) string {
+	for _, b := range HeaderButtons {
+		if b.Action == action {
+			return "#{&&:#{e|>=:" + fromRight + "," + itoa(b.Lo) + "},#{e|<=:" + fromRight + "," + itoa(b.Hi) + "}}"
+		}
+	}
+	return "0"
+}
+
+// ownPanel is a pane drawn by ShellStudio itself, which reads the mouse.
+var ownPanel = "#{||:#{==:#{@ss_kind},explorer},#{==:#{@ss_kind},minimized}}"
+
+var onButtons = "#{e|<=:" + fromRight + "," + itoa(HeaderButtons[len(HeaderButtons)-1].Hi) + "}"
 
 func (m *Mux) dragBindings() [][]string {
 	drop := m.Self("_view", "drop") + ` --origin "#{` + dragPane + `}" --target "#{pane_id}" --client "#{client_name}"`
@@ -385,15 +449,22 @@ func (m *Mux) dragBindings() [][]string {
 		{"bind-key", "-n", "MouseDown1Pane", "if-shell", "-F", "#{pane_dead}",
 			Script(selectPane, dragReset) + " ; " + m.deadPanelMenu(),
 			Script([]string{"if-shell", "-F", onHeader,
-				// The header is not forwarded: it belongs to the view, not the program.
-				Script(selectPane,
-					[]string{"set-option", "-gF", dragClient, "#{client_name}"},
-					[]string{"set-option", "-gF", dragPane, "#{pane_id}"},
-					[]string{"set-option", "-gF", dragKind, "#{?" + isConsole + ",console,header}"}),
-				// tmux default plus the origin: only the explorer arms a path drag.
+				// The header is not forwarded: it belongs to the view, not the
+				// program. Its buttons act at once; elsewhere a press arms the
+				// console drag (or the menu, on release without moving).
+				Script([]string{"if-shell", "-F", "#{&&:" + isConsole + "," + onButtons + "}",
+					Script(selectPane, dragReset, []string{"if-shell", "-F", onButton("menu"), headerMenu,
+						Script([]string{"if-shell", "-F", onButton("maximize"), "resize-pane -Z -t =",
+							m.RunAction("minimize --pane #{pane_id}")})}),
+					Script(selectPane,
+						[]string{"set-option", "-gF", dragClient, "#{client_name}"},
+						[]string{"set-option", "-gF", dragPane, "#{pane_id}"},
+						[]string{"set-option", "-gF", dragKind, "#{?" + isConsole + ",console,header}"})}),
+				// tmux default plus the origin: only the explorer arms a path drag,
+				// and not on its scrollbar (the last column but one).
 				Script(selectPane, []string{"send-keys", "-M"},
 					[]string{"set-option", "-pF", "@ss_client", "#{client_name}"},
-					[]string{"set-option", "-gF", dragClient, "#{?#{==:#{@ss_kind},explorer},#{client_name},}"},
+					[]string{"set-option", "-gF", dragClient, "#{?#{&&:#{==:#{@ss_kind},explorer},#{!=:#{mouse_x},#{e|-:#{pane_width},2}}},#{client_name},}"},
 					[]string{"set-option", "-gF", dragPane, "#{pane_id}"},
 					[]string{"set-option", "-g", dragKind, "path"})})},
 		// Pressing and releasing the header without moving: its menu.
@@ -405,23 +476,31 @@ func (m *Mux) dragBindings() [][]string {
 			Script(selectPane, []string{"send-keys", "-M"})},
 		{"bind-key", "-n", "MouseDrag1Pane", "if-shell", "-F", dragging,
 			Script([]string{"if-shell", "-F", dragIs("path"),
-				Script([]string{"display-message", "-d", "1500", "Drop on a console to type the path"}),
+				Script([]string{"display-message", "-d", "1500", i18n.T("tmux.drop_path")}),
 				Script([]string{"if-shell", "-F", dragIs("console"),
-					Script([]string{"display-message", "-d", "1500", "Drop on another console to swap them"})})}),
+					Script([]string{"display-message", "-d", "1500", i18n.T("tmux.drop_swap")})})}),
 			// The view selects the text: forwarding the drag to the nested tmux
 			// depends on the program's momentary mouse mode and can end up typing
-			// SGR sequences on its input line.
-			"copy-mode -M"},
+			// SGR sequences on its input line. Our own panels (explorer,
+			// Minimized) take the drag: their scrollbars follow it.
+			"if-shell -F " + Quote(ownPanel) + " 'send-keys -M' 'copy-mode -M'"},
 		{"bind-key", "-n", "MouseDragEnd1Pane", "if-shell", "-F", dragging,
 			Script([]string{"if-shell", "-F", dragIs("path"), Script([]string{"run-shell", drop}),
 				Script([]string{"if-shell", "-F", ontoOtherConsole, swap})}, dragReset),
 			"send-keys -M"},
 	}
 	// Dropping on a divider or the status line types nothing.
+	// Ending a divider drag saves the sizes of the left column.
+	saveSizes := m.RunAction(`panel-sizes --pane "#{pane_id}"`)
 	for _, where := range []string{"Border", "Status"} {
 		out = append(out, []string{"bind-key", "-n", "MouseUp1" + where, Script(dragReset)})
+		notDragging := Script(dragReset)
+		if where == "Border" {
+			notDragging = Script(dragReset) + " ; " + saveSizes
+		}
 		out = append(out, []string{"bind-key", "-n", "MouseDragEnd1" + where, "if-shell", "-F", dragging,
-			Script([]string{"if-shell", "-F", dragIs("path"), Script([]string{"run-shell", m.Self("_view", "drop") + ` --origin "#{` + dragPane + `}"`})}, dragReset)})
+			Script([]string{"if-shell", "-F", dragIs("path"), Script([]string{"run-shell", m.Self("_view", "drop") + ` --origin "#{` + dragPane + `}"`})}, dragReset),
+			notDragging})
 	}
 	// tmux double and triple click (select a word or line and copy it), except in
 	// the explorer: there a double click opens the file, and the default

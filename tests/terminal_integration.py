@@ -23,6 +23,10 @@ BINARY = ROOT / "bin/shellstudio"
 WORK = ROOT / ".work"
 
 
+# Rows of the views server status line (the top bar) above every window.
+TOP_BAR_ROWS = 1
+
+
 class Terminal:
     def __init__(self, env, *args, cwd=ROOT):
         self.pid, self.fd = pty.fork()
@@ -67,7 +71,7 @@ class Terminal:
         os.write(self.fd, data)
         return self.pump(wait)
 
-    def expect(self, text, timeout=10):
+    def expect(self, text, timeout=20):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if text.encode() in self.output:
@@ -76,7 +80,8 @@ class Terminal:
         raise AssertionError(f"terminal did not show {text!r}; tail={self.output[-2200:]!r}")
 
     def mouse(self, button, x, y, release=False, wait=0.15):
-        return self.send(f"\x1b[<{button};{x+1};{y+1}{'m' if release else 'M'}".encode(), wait)
+        """x and y are window coordinates: the top bar takes the first row."""
+        return self.send(f"\x1b[<{button};{x+1};{y+1+TOP_BAR_ROWS}{'m' if release else 'M'}".encode(), wait)
 
     def close(self, abrupt=False):
         try:
@@ -101,7 +106,9 @@ class Integration(unittest.TestCase):
         WORK.mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(prefix="it-", dir=WORK)
         self.root = Path(self.temp.name)
-        self.env = {**os.environ, "TERM": "xterm-256color", "SHELL": "/bin/sh",
+        # English UI regardless of the developer's locale: scenarios match
+        # English text. Spanish has its own scenario.
+        self.env = {**os.environ, "LANG": "C", "LC_ALL": "C", "LC_MESSAGES": "C", "TERM": "xterm-256color", "SHELL": "/bin/sh",
                     "SHELLSTUDIO_NO_UPDATE_CHECK": "1"}
         self.env.pop("TMUX", None)
         self.env.pop("TMUX_PANE", None)
@@ -408,7 +415,7 @@ class Integration(unittest.TestCase):
             flags = self.tmux(server, "list-clients", "-F", "#{client_flags}").splitlines()
             self.assertTrue(flags)
             self.assertTrue(all("UTF-8" in f for f in flags), (server, flags))
-        t.expect("▾")
+        t.expect("▼")
 
     def test_stale_pane_death_does_not_disconnect_live_console(self):
         view = json.loads(self.cli("new-view", "Main"))
@@ -446,7 +453,7 @@ class Integration(unittest.TestCase):
         self.tmux("views", "resize-window", "-t", session, "-x", "80", "-y", "24")
         self.cli("_view", "previous", "--client", client)
         self.wait_for(lambda: self.tmux("views", "display-message", "-p", "-t", session,
-                                       "#{window_width}x#{window_height}") == "140x42")
+                                       "#{window_width}x#{window_height}") == f"140x{42-TOP_BAR_ROWS}")
 
     def test_notes_continuous_autosave_and_abrupt_recovery(self):
         t = self.terminal("notes")
@@ -509,7 +516,7 @@ class Integration(unittest.TestCase):
             t.send(name.encode() + b"\r")
             self.wait_for(lambda: any(c["Name"] == "terminal-"+name
                                      for c in json.loads(self.cli("consoles")) or []))
-            t.expect("ACTIVE:")
+            t.expect("□")  # console headers are drawn
             # Creation records metadata before reconciling the panes. Wait for
             # the dialog process to exit before sending another shortcut.
             self.wait_dialog_closed()
@@ -643,7 +650,7 @@ class Integration(unittest.TestCase):
         consoles = [json.loads(self.cli("launch", "--view", view["ID"])) for _ in range(4)]
         t = self.terminal()
         t.resize(160, 48)
-        t.expect("ACTIVE:")
+        t.expect("□")  # console headers are drawn
         t.pump(0.8)
         pids = self.tmux("programs", "list-panes", "-a", "-F", "#{pane_pid}")
         client = self.tmux("views", "list-clients", "-F", "#{client_name}")
@@ -687,7 +694,7 @@ class Integration(unittest.TestCase):
             self.cli("launch", "--view", view["ID"])
         t = self.terminal()
         t.resize(160, 48)
-        t.expect("ACTIVE:")
+        t.expect("□")  # console headers are drawn
         t.pump(0.8)
         src = next(p for p in self.panes() if p["kind"] == "console")
         before = self.panes()
@@ -709,7 +716,7 @@ class Integration(unittest.TestCase):
         consoles = [json.loads(self.cli("launch", "--view", view["ID"])) for _ in range(3)]
         t = self.terminal()
         t.resize(160, 48)
-        t.expect("ACTIVE:")
+        t.expect("□")  # console headers are drawn
         t.pump(0.8)
         # Replies to these probes come back through SSH/ConPTY and leaked into
         # the focused console; the user's terminal must not be asked at all.
@@ -739,7 +746,7 @@ class Integration(unittest.TestCase):
         consoles = [json.loads(self.cli("launch", "--view", view["ID"])) for _ in range(2)]
         t = self.terminal()
         t.resize(160, 48)
-        t.expect("ACTIVE:")
+        t.expect("□")  # console headers are drawn
         t.pump(0.8)
         src, other = [p for p in self.panes() if p["kind"] == "console"]
         self.tmux("views", "resize-pane", "-t", src["id"], "-x", "47")
@@ -792,7 +799,7 @@ class Integration(unittest.TestCase):
         console = json.loads(self.cli("launch", "--view", view["ID"]))
         t = self.terminal()
         t.resize(120, 36)
-        t.expect("ACTIVE:")
+        t.expect("□")  # console headers are drawn
         client = self.tmux("views", "list-clients", "-F", "#{client_name}")
         t.output = b""
         p = subprocess.Popen([str(BINARY), "_view", "layout", "--client", client,
@@ -849,6 +856,194 @@ class Integration(unittest.TestCase):
         t.expect("console is stopped")
         self.assertEqual(len(json.loads(self.cli("consoles"))), 1)
         self.assertEqual(self.tmux("programs", "list-sessions"), "")
+
+    # --- Redesign: top bar, header buttons, Minimized panel, tags, i18n ---
+
+    def db(self):
+        return sqlite3.connect(self.root / "d/shellstudio/shellstudio.db")
+
+    def pane_of(self, kind, console=None, view=None):
+        if view is None:
+            # The view the terminal is looking at.
+            sessions = self.tmux("views", "list-clients", "-F", "#{session_name}").split()
+            view = sessions[0][2:] if sessions else None
+        rows = self.tmux("views", "list-panes", "-s", "-t", "=v-" + view, "-F",
+                         "#{pane_id}|#{@ss_kind}|#{@ss_console}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}") if view else ""
+        for row in rows.splitlines():
+            p = dict(zip(("id", "kind", "console", "x", "y", "w", "h"), row.split("|")))
+            if p["kind"] == kind and (console is None or p["console"] == console):
+                return p
+        return None
+
+    def program_pid(self, console):
+        return self.tmux("programs", "display-message", "-p", "-t", "=c-" + console + ":", "#{pane_pid}")
+
+    def wait_text(self, pane, text, present=True, timeout=10):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            shown = self.tmux("views", "capture-pane", "-p", "-t", pane["id"])
+            if (text in shown) == present:
+                return shown
+            time.sleep(0.2)
+        self.fail(f"{text!r} {'not ' if present else ''}shown in {pane['kind']}:\n{shown}")
+
+    def click_header_button(self, t, pane, slot):
+        """slot counts columns from the pane's right edge: 1 menu, 4 maximize, 7 minimize."""
+        x = int(pane["x"]) + int(pane["w"]) - 1 - slot
+        t.mouse(0, x, int(pane["y"]))
+        t.mouse(0, x, int(pane["y"]), release=True, wait=0.6)
+
+    def test_top_bar_tabs_and_header_buttons(self):
+        alpha = json.loads(self.cli("new-view", "Alpha"))
+        beta = json.loads(self.cli("new-view", "Beta"))
+        self.cli("launch", "--view", alpha["ID"], "--name", "One")
+        consoles = [json.loads(self.cli("launch", "--view", beta["ID"], "--name", n)) for n in ("Two", "Three")]
+        t = self.terminal()
+        t.resize(160, 48)
+        t.expect("VIEWS")
+        t.expect("New console")
+        client = self.tmux("views", "list-clients", "-F", "#{client_name}")
+        def session():
+            return self.tmux("views", "list-clients", "-F", "#{session_name}")
+        # Tabs follow " VIEWS ": " Alpha " then " Beta ", one space apart.
+        x_beta = len(" VIEWS ") + 1 + len(" Alpha ") + 1 + 1
+        target = "v-" + (alpha["ID"] if session() == "v-" + beta["ID"] else beta["ID"])
+        x = x_beta if target == "v-" + beta["ID"] else len(" VIEWS ") + 2
+        t.mouse(0, x, -TOP_BAR_ROWS)
+        t.mouse(0, x, -TOP_BAR_ROWS, release=True, wait=0.5)
+        self.wait_for(lambda: session() == target)
+        if target != "v-" + beta["ID"]:
+            t.mouse(0, x_beta, -TOP_BAR_ROWS)
+            t.mouse(0, x_beta, -TOP_BAR_ROWS, release=True, wait=0.5)
+            self.wait_for(lambda: session() == "v-" + beta["ID"])
+        t.expect("□")
+        self.wait_for(lambda: self.pane_of("console", consoles[0]["ID"]) is not None)
+        pid = self.program_pid(consoles[0]["ID"])
+        # □ zooms the pane, ─ minimizes the console without ending it.
+        self.click_header_button(t, self.pane_of("console", consoles[1]["ID"]), 4)
+        self.wait_for(lambda: self.tmux("views", "display-message", "-p", "-t", "=v-" + beta["ID"] + ":", "#{window_zoomed_flag}") == "1")
+        self.tmux("views", "resize-pane", "-Z", "-t", self.pane_of("console", consoles[1]["ID"])["id"])
+        self.click_header_button(t, self.pane_of("console", consoles[0]["ID"]), 7)
+        self.wait_for(lambda: self.pane_of("console", consoles[0]["ID"]) is None)
+        self.assertEqual(self.program_pid(consoles[0]["ID"]), pid)
+        with self.db() as db:
+            rows = db.execute("SELECT console_id, minimized FROM members WHERE view_id=? ORDER BY position", (beta["ID"],)).fetchall()
+        self.assertEqual(rows, [(consoles[0]["ID"], 1), (consoles[1]["ID"], 0)])
+        panel = self.pane_of("minimized")
+        self.assertIsNotNone(panel)
+        self.wait_text(panel, "Terminal · Two")
+        # A double click on its row restores it, in its place, same program.
+        x, y = int(panel["x"]) + 14, int(panel["y"]) + 3
+        for _ in range(2):
+            t.mouse(0, x, y)
+            t.mouse(0, x, y, release=True, wait=0.05)
+        self.wait_for(lambda: self.pane_of("console", consoles[0]["ID"]) is not None)
+        ours = {c["ID"] for c in consoles}
+        self.assertEqual([p["console"] for p in self.panes() if p["console"] in ours],
+                         [consoles[0]["ID"], consoles[1]["ID"]])
+        self.assertEqual(self.program_pid(consoles[0]["ID"]), pid)
+        self.wait_text(panel, "No minimized consoles")
+
+    def test_minimized_search_filter_and_tags(self):
+        view = json.loads(self.cli("new-view", "Main"))
+        consoles = [json.loads(self.cli("launch", "--view", view["ID"], "--name", n)) for n in ("Api", "Web", "Keep")]
+        t = self.terminal()
+        t.resize(160, 48)
+        t.expect("□")
+        self.wait_for(lambda: self.pane_of("minimized") is not None and self.pane_of("console", consoles[2]["ID"]) is not None)
+        panel = self.pane_of("minimized")
+        with self.db() as db:
+            tags = db.execute("SELECT id, name FROM tags ORDER BY position").fetchall()
+        self.cli("_action", "tag", "--pane", panel["id"], "--session", "c-" + consoles[0]["ID"], "--target", tags[1][0])
+        self.assertEqual(self.tmux("programs", "show-options", "-qv", "-t", "=c-" + consoles[0]["ID"] + ":", "@ss_tag"), tags[1][1])
+        for c in consoles[:2]:
+            self.cli("_action", "minimize", "--pane", panel["id"], "--session", "c-" + c["ID"])
+        capture = lambda: self.tmux("views", "capture-pane", "-p", "-t", self.pane_of("minimized")["id"])
+        self.wait_for(lambda: "Terminal · Api" in capture() and "Terminal · Web" in capture())
+        self.assertIn("MINIMIZED  2", capture())
+        # Filter by tag through the stored preference, as its menu does.
+        self.cli("_action", "minprefs", "--target", "filter:" + tags[1][0])
+        self.wait_for(lambda: "Terminal · Web" not in capture())
+        self.assertIn("Terminal · Api", capture())
+        self.cli("_action", "minprefs", "--target", "filter:")
+        self.wait_for(lambda: "Terminal · Web" in capture())
+        # Search: click the field and type.
+        panel = self.pane_of("minimized")
+        t.mouse(0, int(panel["x"]) + 3, int(panel["y"]) + 1)
+        t.mouse(0, int(panel["x"]) + 3, int(panel["y"]) + 1, release=True)
+        t.send(b"web", 0.6)
+        self.wait_for(lambda: "Terminal · Api" not in capture())
+        self.assertIn("Terminal · Web", capture())
+        # Deleting the tag in the tags dialog leaves the console untagged.
+        client = self.tmux("views", "list-clients", "-F", "#{client_name}")
+        dialog = subprocess.Popen([str(BINARY), "_dialog", "tags", "--client", client], env=self.env,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        t.expect("TAGS")
+        t.expect("consoles", timeout=10)  # the list is drawn
+        t.pump(0.5)
+        t.send(b"\x1b[B", 0.3)      # second tag
+        t.send(b"\x1b[3~", 0.5)     # Del
+        t.expect("left untagged")
+        t.send(b"\r", 0.5)
+        t.send(b"\x1b", 0.5)
+        dialog.wait(timeout=10)
+        with self.db() as db:
+            left = db.execute("SELECT name FROM tags ORDER BY position").fetchall()
+            self.assertIsNone(db.execute("SELECT tag_id FROM consoles WHERE id=?", (consoles[0]["ID"],)).fetchone()[0], (tags, left))
+            self.assertEqual(db.execute("SELECT count(*) FROM tags WHERE id=?", (tags[1][0],)).fetchone()[0], 0)
+        self.assertEqual(self.tmux("programs", "show-options", "-qv", "-t", "=c-" + consoles[0]["ID"] + ":", "@ss_tag"), "")
+
+    def test_explorer_search_filters_the_tree(self):
+        project = self.root / "project"
+        for f in ("src/main.go", "src/util/strings.go", "docs/README.md", "Makefile"):
+            (project / f).parent.mkdir(parents=True, exist_ok=True)
+            (project / f).write_text("x\n")
+        t = Terminal(self.env, str(project))
+        self.terms.append(t)
+        t.resize(140, 40)
+        t.expect("Search files")
+        self.wait_for(lambda: self.pane_of("explorer") is not None)
+        tree = self.pane_of("explorer")
+        t.mouse(0, 3, 1)
+        t.mouse(0, 3, 1, release=True)
+        t.send(b"strings", 1.0)
+        capture = lambda: self.tmux("views", "capture-pane", "-p", "-t", tree["id"])
+        self.wait_for(lambda: "strings.go" in capture() and "Makefile" not in capture())
+        self.assertIn("util", capture())  # ancestors of the match stay
+        t.send(b"\x1b", 0.6)
+        self.wait_for(lambda: "Makefile" in capture())
+
+    def test_panel_sizes_persist_after_leaving(self):
+        project = self.root / "project"
+        project.mkdir()
+        t = Terminal(self.env, str(project))
+        self.terms.append(t)
+        t.resize(160, 48)
+        t.expect("MINIMIZED")
+        self.wait_for(lambda: self.pane_of("explorer") is not None)
+        tree = self.pane_of("explorer")
+        self.tmux("views", "resize-pane", "-t", tree["id"], "-x", "56")
+        self.cli("_action", "panel-sizes", "--pane", tree["id"])
+        view = json.loads(self.cli("views"))[0]["ID"]
+        with self.db() as db:
+            self.assertEqual(db.execute("SELECT explorer_width FROM views WHERE id=?", (view,)).fetchone()[0], 56)
+        t.send(b"\x1b[21~", 1.0)  # F10
+        self.tmux("views", "kill-server")
+        t = self.terminal()
+        t.resize(160, 48)
+        t.expect("MINIMIZED")
+        self.wait_for(lambda: self.pane_of("explorer") is not None and self.pane_of("explorer")["w"] == "56")
+
+    def test_spanish_interface(self):
+        self.env.update(LANG="es_AR.UTF-8", LC_ALL="es_AR.UTF-8", LC_MESSAGES="es_AR.UTF-8")
+        project = self.root / "proyecto"
+        project.mkdir()
+        t = Terminal(self.env, str(project))
+        self.terms.append(t)
+        t.resize(160, 48)
+        for text in ("VISTAS", "Nueva consola", "Buscar archivos", "MINIMIZADAS", "Buscar consolas"):
+            t.expect(text)
+        self.assertEqual(self.tmux("views", "show-options", "-gqv", "@ss_lang"), "es")
 
 
 if __name__ == "__main__":

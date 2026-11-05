@@ -2,9 +2,10 @@
 package app
 
 import (
-	"fmt"
+	"errors"
 	"strings"
 
+	"shellstudio/internal/i18n"
 	"shellstudio/internal/platform"
 )
 
@@ -46,7 +47,17 @@ var permissionFlags = map[string][]string{
 }
 
 func Permissions(agent string) []Permission { return permissions[agent] }
-func AgentLabel(agent string) string        { return builtinKinds[agent][0] }
+
+// PermissionText is the label and detail of a preset in the current language.
+// Permission itself keeps the English text: it is also data (JSON).
+func PermissionText(agent string, p Permission) (string, string) {
+	k := "perm." + agent + "." + p.ID
+	if !i18n.Has(k) {
+		return p.Label, p.Detail
+	}
+	return i18n.T(k), i18n.T(k + ".detail")
+}
+func AgentLabel(agent string) string { return builtinKinds[agent][0] }
 
 func FindPermission(agent, id string) (Permission, error) {
 	if id == "" {
@@ -57,7 +68,7 @@ func FindPermission(agent, id string) (Permission, error) {
 			return p, nil
 		}
 	}
-	return Permission{}, fmt.Errorf("unknown %s permission mode %q", agent, id)
+	return Permission{}, errors.New(i18n.T("err.permission_mode", agent, id))
 }
 
 // Permission is the saved choice of an agent, or its default.

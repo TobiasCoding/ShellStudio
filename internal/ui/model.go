@@ -18,6 +18,7 @@ import (
 	"shellstudio/internal/diagnostics"
 	"shellstudio/internal/explorer"
 	"shellstudio/internal/extensions"
+	"shellstudio/internal/i18n"
 	"shellstudio/internal/mcp"
 	"shellstudio/internal/platform"
 	"shellstudio/internal/store"
@@ -93,7 +94,7 @@ func New(a *app.App, screen string) *Model {
 	e := textarea.New()
 	e.CharLimit = 4 << 20
 	e.ShowLineNumbers = true
-	e.Placeholder = "Write a note…"
+	e.Placeholder = i18n.T("notes.placeholder")
 	e.Prompt = "│ "
 	e.Focus()
 	m := &Model{App: a, Client: store.ID(), Screen: screen, Width: 100, Height: 30, editor: e, viewport: viewport.New(90, 20), saveStatus: "Saved"}
@@ -110,7 +111,7 @@ func (m *Model) Init() tea.Cmd {
 func (m *Model) fail(e error) {
 	if e != nil {
 		diagnostics.Record(diagnostics.Entry{Event: "ui-error", Operation: m.Screen}, e, time.Time{})
-		m.Status = "Error: " + e.Error()
+		m.Status = i18n.T("notes.error", e.Error())
 	}
 }
 func (m *Model) refresh() {
@@ -128,11 +129,11 @@ func (m *Model) refresh() {
 		for i, c := range m.catalog {
 			label := c.Manifest.ID + "  " + c.Manifest.Version
 			if c.Error != "" {
-				label = "Invalid: " + c.Source + " — " + c.Error
+				label = i18n.T("notes.ext_invalid", c.Source, c.Error)
 			} else if m.App.Extensions.Enabled(c.Manifest) {
-				label += "  [enabled]"
+				label += "  " + i18n.T("notes.ext_enabled")
 			} else {
-				label += "  [disabled]"
+				label += "  " + i18n.T("notes.ext_disabled")
 			}
 			m.Rows = append(m.Rows, Row{fmt.Sprint(i), label})
 		}
@@ -143,7 +144,7 @@ func (m *Model) goTo(screen string) { m.Screen = screen; m.Index = 0; m.Status =
 func (m *Model) op(work func() (any, error), after func(any)) tea.Cmd {
 	m.busy = true
 	m.after = after
-	m.Status = "Working…"
+	m.Status = i18n.T("notes.working")
 	return func() tea.Msg { v, e := work(); return resultMsg{v, e} }
 }
 func (m *Model) form(title, back string, labels, values []string, submit func([]string) tea.Cmd) {
@@ -250,7 +251,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.err != nil {
 			m.fail(v.err)
 		} else {
-			m.Status = "Done"
+			m.Status = i18n.T("notes.done")
 			if f != nil {
 				f(v.value)
 			}
@@ -261,7 +262,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.saving = false
 		if v.err != nil {
 			m.saveStatus = "Error: " + v.err.Error()
-			m.Status = m.saveStatus
+			m.Status = i18n.T("notes.error", v.err.Error())
 			m.leave = false
 			m.quit = false
 			return m, nil
@@ -272,7 +273,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.note.Updated = v.note.Updated
 		m.dirty = m.editor.Value() != v.body
 		if v.conflict {
-			m.Status = "Concurrent edit: both versions kept; editing the conflict copy"
+			m.Status = i18n.T("notes.conflict")
 		}
 		if m.dirty {
 			m.firstDirty = time.Now()
@@ -355,7 +356,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		k := v.String()
 		if m.busy {
 			if k == "ctrl+c" {
-				m.Status = "Wait for the active operation to finish before closing"
+				m.Status = i18n.T("notes.busy")
 			}
 			return m, nil
 		}
@@ -489,7 +490,7 @@ func (m *Model) activate() tea.Cmd {
 	switch m.Screen {
 	case "notes":
 		if m.trash {
-			m.Status = "Press r to restore this note"
+			m.Status = i18n.T("notes.restore_hint")
 			return nil
 		}
 		n, e := m.App.Store.Note(id)
@@ -506,7 +507,7 @@ func (m *Model) activate() tea.Cmd {
 				return nil
 			}
 			m.selected = e.Manifest
-			m.viewport.SetContent(m.App.Extensions.Preview(m.selected) + "\nSource: " + e.Source + "\n\n" + m.selected.Description)
+			m.viewport.SetContent(m.App.Extensions.Preview(m.selected) + "\n" + i18n.T("notes.ext_source", e.Source) + "\n\n" + m.selected.Description)
 			m.viewport.GotoTop()
 			m.Screen = "extension"
 		}
@@ -522,7 +523,7 @@ func (m *Model) key(k string) tea.Cmd {
 	case "notes":
 		switch k {
 		case "n":
-			m.form("New note", "notes", []string{"Title"}, []string{"Untitled"}, func(v []string) tea.Cmd {
+			m.form(i18n.T("notes.new"), "notes", []string{i18n.T("notes.field_title")}, []string{i18n.T("notes.untitled")}, func(v []string) tea.Cmd {
 				n, e := m.App.Store.NewNote(v[0])
 				m.fail(e)
 				if e == nil {
@@ -531,7 +532,7 @@ func (m *Model) key(k string) tea.Cmd {
 				return nil
 			})
 		case "/":
-			m.form("Search notes", "notes", []string{"Text"}, []string{m.search}, func(v []string) tea.Cmd { m.search = v[0]; m.goTo("notes"); return nil })
+			m.form(i18n.T("notes.search"), "notes", []string{i18n.T("notes.field_text")}, []string{m.search}, func(v []string) tea.Cmd { m.search = v[0]; m.goTo("notes"); return nil })
 		case "t":
 			m.trash = !m.trash
 			m.refresh()
@@ -551,7 +552,7 @@ func (m *Model) key(k string) tea.Cmd {
 						m.fail(e)
 						break
 					}
-					m.form("Rename note", "notes", []string{"Title"}, []string{n.Title}, func(v []string) tea.Cmd {
+					m.form(i18n.T("notes.rename"), "notes", []string{i18n.T("notes.field_title")}, []string{n.Title}, func(v []string) tea.Cmd {
 						n.Title = v[0]
 						_, _, e := m.App.Store.SaveNote(n)
 						if e != nil {
@@ -567,9 +568,9 @@ func (m *Model) key(k string) tea.Cmd {
 			if id != "" {
 				n, e := m.App.Store.Note(id)
 				m.fail(e)
-				m.form("Export Markdown", "notes", []string{"Destination (existing file is replaced)"}, []string{filepath.Join(m.App.CWD, "note-"+n.ID+".md")}, func(v []string) tea.Cmd {
+				m.form(i18n.T("notes.export"), "notes", []string{i18n.T("notes.export_dest")}, []string{filepath.Join(m.App.CWD, "note-"+n.ID+".md")}, func(v []string) tea.Cmd {
 					path := v[0]
-					m.ask("Export Markdown to "+path+"?\nAn existing file is replaced.", "notes", func() tea.Cmd {
+					m.ask(i18n.T("notes.export_ask", path), "notes", func() tea.Cmd {
 						e := platform.AtomicWrite(path, []byte("# "+n.Title+"\n\n"+n.Body+"\n"))
 						m.goTo("notes")
 						m.fail(e)
@@ -581,10 +582,10 @@ func (m *Model) key(k string) tea.Cmd {
 		}
 	case "extensions":
 		if k == "a" {
-			m.form("Import extension", "extensions", []string{"Manifest file or HTTPS URL"}, nil, func(v []string) tea.Cmd {
+			m.form(i18n.T("notes.ext_import"), "extensions", []string{i18n.T("notes.ext_manifest")}, nil, func(v []string) tea.Cmd {
 				return m.op(func() (any, error) { return extensions.ImportPreview(v[0]) }, func(x any) {
 					man := x.(extensions.Manifest)
-					m.ask(m.App.Extensions.Preview(man)+"\nImport this manifest? (No commands run yet.)", "extensions", func() tea.Cmd {
+					m.ask(m.App.Extensions.Preview(man)+"\n"+i18n.T("notes.ext_import_ok"), "extensions", func() tea.Cmd {
 						e := extensions.Import(m.App.Paths.Config, man)
 						m.goTo("extensions")
 						m.fail(e)
@@ -614,7 +615,7 @@ func (m *Model) detailKey(k string, msg tea.Msg) tea.Cmd {
 	}
 	if m.Screen == "viewer" {
 		if k == "/" {
-			m.form("Filter viewer", "viewer", []string{"Text"}, []string{m.viewerFilter}, func(v []string) tea.Cmd {
+			m.form(i18n.T("notes.filter"), "viewer", []string{i18n.T("notes.field_text")}, []string{m.viewerFilter}, func(v []string) tea.Cmd {
 				m.viewerFilter = v[0]
 				m.viewerLast = time.Time{}
 				m.Screen = "viewer"
@@ -629,7 +630,7 @@ func (m *Model) detailKey(k string, msg tea.Msg) tea.Cmd {
 		man := m.selected
 		switch k {
 		case "i":
-			m.ask(m.App.Extensions.Preview(man)+"\nInstall and enable?", "extensions", func() tea.Cmd {
+			m.ask(m.App.Extensions.Preview(man)+"\n"+i18n.T("notes.ext_install"), "extensions", func() tea.Cmd {
 				return m.op(func() (any, error) { return nil, m.App.Extensions.Install(man) }, func(any) { m.goTo("extensions") })
 			})
 			return nil
@@ -639,9 +640,9 @@ func (m *Model) detailKey(k string, msg tea.Msg) tea.Cmd {
 			return nil
 		case "u", "X":
 			purge := k == "X"
-			text := "Uninstall " + man.ID + "?\nRunning consoles continue. Data is retained."
+			text := i18n.T("notes.ext_uninstall", man.ID)
 			if purge {
-				text += "\nDELETE this extension's stored data as well."
+				text += "\n" + i18n.T("notes.ext_purge")
 			}
 			m.ask(text, "extensions", func() tea.Cmd {
 				e := m.App.Extensions.Uninstall(man, purge)
@@ -666,7 +667,7 @@ func (m *Model) detailKey(k string, msg tea.Msg) tea.Cmd {
 			}
 			a, _ := json.Marshal(p.Args)
 			env, _ := json.Marshal(p.Env)
-			m.form("Save default profile · "+man.ID, "extensions", []string{"Profile name", "Executable", "Arguments (JSON array)", "Environment (JSON object)"}, []string{name, p.Executable, string(a), string(env)}, func(v []string) tea.Cmd {
+			m.form(i18n.T("notes.ext_profile", man.ID), "extensions", []string{i18n.T("notes.ext_prof_name"), i18n.T("notes.ext_exec"), i18n.T("notes.ext_args"), i18n.T("notes.ext_env")}, []string{name, p.Executable, string(a), string(env)}, func(v []string) tea.Cmd {
 				var p platform.Profile
 				p.Executable = v[1]
 				if e := json.Unmarshal([]byte(v[2]), &p.Args); e != nil {
@@ -701,14 +702,14 @@ func (m *Model) detailKey(k string, msg tea.Msg) tea.Cmd {
 			return nil
 		case "m":
 			if man.MCP == nil {
-				m.Status = "This extension has no MCP server"
+				m.Status = i18n.T("notes.ext_no_mcp")
 				return nil
 			}
 			if !m.App.Extensions.Enabled(man) {
-				m.Status = "Install and enable the MCP extension first"
+				m.Status = i18n.T("notes.ext_mcp_first")
 				return nil
 			}
-			m.choose("Register MCP client", "extensions", []Row{{"claude", "Claude"}, {"codex", "Codex"}}, func(client string) tea.Cmd {
+			m.choose(i18n.T("notes.ext_register"), "extensions", []Row{{"claude", "Claude"}, {"codex", "Codex"}}, func(client string) tea.Cmd {
 				path, e := mcp.ClientPath(client)
 				if e != nil {
 					m.fail(e)
@@ -728,7 +729,7 @@ func (m *Model) detailKey(k string, msg tea.Msg) tea.Cmd {
 				}
 				text := plan.Preview
 				if !detected {
-					text += "\nClient absent: save a pending registration only. Apply again after installing the client."
+					text += "\n" + i18n.T("notes.ext_absent")
 				}
 				m.ask(text, "extensions", func() tea.Cmd {
 					if !detected {
@@ -753,7 +754,7 @@ func (m *Model) detailKey(k string, msg tea.Msg) tea.Cmd {
 	return cmd
 }
 func (m *Model) commandForm() {
-	m.form("Existing command extension", "extensions", []string{"ID (lowercase letters, digits, hyphens)", "Description", "Executable", "Arguments (JSON array)", "Environment (JSON object)"}, []string{"my-tool", "My command", "", "[]", "{}"}, func(v []string) tea.Cmd {
+	m.form(i18n.T("notes.ext_command"), "extensions", []string{i18n.T("notes.ext_id"), i18n.T("notes.ext_desc"), i18n.T("notes.ext_exec"), i18n.T("notes.ext_args"), i18n.T("notes.ext_env")}, []string{"my-tool", i18n.T("notes.ext_my_cmd"), "", "[]", "{}"}, func(v []string) tea.Cmd {
 		p := platform.Profile{Executable: v[2]}
 		if e := json.Unmarshal([]byte(v[3]), &p.Args); e != nil {
 			m.fail(e)
@@ -769,7 +770,7 @@ func (m *Model) commandForm() {
 			m.fail(e)
 			return nil
 		}
-		m.ask(m.App.Extensions.Preview(man)+"\nAdd this command?", "extensions", func() tea.Cmd {
+		m.ask(m.App.Extensions.Preview(man)+"\n"+i18n.T("notes.ext_add_cmd"), "extensions", func() tea.Cmd {
 			e := extensions.Import(m.App.Paths.Config, man)
 			if e == nil {
 				e = m.App.Extensions.Enable(man, true)
@@ -786,10 +787,7 @@ func (m *Model) View() string {
 	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	selected := lipgloss.NewStyle().Foreground(lipgloss.Color("235")).Background(lipgloss.Color("86"))
-	title := strings.ToUpper(m.Screen)
-	if m.Screen == "notes" && m.trash {
-		title = "NOTES · Trash"
-	}
+	title := m.screenTitle()
 	var body, help string
 	switch m.Screen {
 	case "form":
@@ -800,30 +798,30 @@ func (m *Model) View() string {
 		for _, f := range m.fields {
 			body += labelStyle.Render(explorer.Clean(f.Label)) + "\n" + inputStyle.Render(f.Input.View()) + "\n\n"
 		}
-		body += lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Render("[ Save ]") + "     " + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("[ Cancel ]")
-		help = "Tab next field · Enter confirm · Esc cancel"
+		body += lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true).Render(i18n.T("notes.save")) + "     " + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(i18n.T("notes.cancel"))
+		help = i18n.T("notes.help_form")
 	case "choice":
 		title = m.formTitle
-		help = "↑↓ choose · Enter select · Esc back"
+		help = i18n.T("notes.help_choice")
 	case "confirm":
-		title = "Review action"
+		title = i18n.T("notes.review")
 		body = m.viewport.View()
-		help = "y confirm · n / Esc cancel · ↑↓ scroll"
+		help = i18n.T("notes.help_confirm")
 	case "editor":
-		title = m.note.Title + " · " + m.saveStatus
+		title = m.note.Title + " · " + m.saveLabel()
 		body = m.editor.View()
-		help = "Autosave: 300 ms idle / 1 s continuous · Ctrl+S save · Esc save and leave"
+		help = i18n.T("notes.help_editor")
 	case "extension":
 		title = m.selected.ID
 		body = m.viewport.View()
-		help = "i install · e enable · d disable · c profile · m MCP · u uninstall · X purge · Esc"
+		help = i18n.T("notes.help_ext")
 	case "text", "viewer":
 		body = m.viewport.View()
-		help = "↑↓ / PgUp/PgDn scroll · / filter viewer · r refresh · Esc back · q quit"
+		help = i18n.T("notes.help_viewer")
 	case "notes":
-		help = "n new · Enter edit · / search · r rename/restore · d trash · t trash view · e export · q quit"
+		help = i18n.T("notes.help_notes")
 	case "extensions":
-		help = "Enter details · a import file/HTTPS · n existing command · q quit"
+		help = i18n.T("notes.help_exts")
 	}
 	if body == "" {
 		start := m.offset()
@@ -836,7 +834,7 @@ func (m *Model) View() string {
 			body += line + "\n"
 		}
 		if len(m.Rows) == 0 {
-			body = "  Nothing here yet. Use the actions below to get started.\n"
+			body = "  " + i18n.T("notes.empty") + "\n"
 		}
 	}
 	contentHeight := max(1, m.Height-9)
@@ -850,9 +848,41 @@ func (m *Model) View() string {
 	return accent.Render(explorer.Clean(title)) + "\n" + muted.Render(strings.Repeat("─", max(1, m.Width-1))) + "\n\n\n" + content + "\n" + muted.Render(explorer.Clean(help)) + "\n" + lipgloss.NewStyle().MaxWidth(m.Width).Render(explorer.Clean(m.Status)) + "\n"
 }
 
+// screenTitle is the title of the current screen; form, choice and the
+// other detail screens replace it in View.
+func (m *Model) screenTitle() string {
+	switch {
+	case m.Screen == "notes" && m.trash:
+		return i18n.T("notes.trash_title")
+	case m.Screen == "notes":
+		return i18n.T("notes.title")
+	case m.Screen == "extensions":
+		return i18n.T("notes.ext_title")
+	case m.Screen == "viewer":
+		return i18n.T("notes.viewer_title")
+	case m.Screen == "text":
+		return i18n.T("notes.text_title")
+	}
+	return strings.ToUpper(m.Screen)
+}
+
+// saveLabel shows saveStatus, kept in English as state, in the current language.
+func (m *Model) saveLabel() string {
+	switch m.saveStatus {
+	case "Saving":
+		return i18n.T("notes.saving")
+	case "Saved":
+		return i18n.T("notes.saved")
+	}
+	if detail, ok := strings.CutPrefix(m.saveStatus, "Error: "); ok {
+		return i18n.T("notes.error", detail)
+	}
+	return m.saveStatus
+}
+
 func (m *Model) SetViewer(kind, path string) {
 	m.Screen = "viewer"
 	m.viewerKind = kind
 	m.viewerPath = path
-	m.viewport.SetContent("Loading…")
+	m.viewport.SetContent(i18n.T("notes.loading"))
 }

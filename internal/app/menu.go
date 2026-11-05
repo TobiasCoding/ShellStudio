@@ -2,10 +2,10 @@
 package app
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/mattn/go-runewidth"
+	"shellstudio/internal/i18n"
 	"shellstudio/internal/mux"
 	"shellstudio/internal/store"
 )
@@ -17,17 +17,51 @@ type MenuColumn struct {
 }
 
 // Shortcut lines of each list; they also give the exact size of its popup.
-var (
-	ArrangeHelp = []string{"Space  Mark / unmark", "A  Mark all", "0  Unmark all", "S  Mark only the active one",
-		"1  Columns", "2  Rows", "3  Grid", "4  Active on the left", "5  Active on top", "Q / Esc  Back",
-		"Partial selection: creates another view."}
-	BrowseHelp = []string{"Enter  Open", "E  Consoles of the view", "N  New view", "Del  Delete view", "Q / Esc  Back"}
-	NewHelp    = []string{"Enter  Create", "Q / Esc  Cancel"}
-	AddHelp    = []string{"Enter  Add", "Q / Esc  Back"}
-	// Settings that apply to the whole application, not to this view.
-	PermissionsHelp    = []string{"Enter  Change", "Q / Esc  Back", "Applies to consoles created afterwards."}
-	PermissionModeHelp = []string{"Enter  Use for new consoles", "Q / Esc  Back"}
-)
+// They are functions so that they follow the current language. The key of
+// every line stays first and untranslated: HintKey reads it.
+func ArrangeHelp() []string {
+	out := []string{i18n.T("ui.help.mark"), i18n.T("ui.help.mark_all"), i18n.T("ui.help.unmark_all"), i18n.T("ui.help.mark_active")}
+	for _, l := range mux.LayoutKeys {
+		out = append(out, l.Key+"  "+mux.LayoutLabel(l.Layout))
+	}
+	return append(out, i18n.T("ui.help.back"), i18n.T("ui.help.partial"))
+}
+func BrowseHelp() []string {
+	return []string{i18n.T("ui.help.open"), i18n.T("ui.help.view_cons"), i18n.T("ui.help.new_view"), i18n.T("ui.help.delete_view"), i18n.T("ui.help.back")}
+}
+func NewHelp() []string { return []string{i18n.T("ui.help.create"), i18n.T("ui.help.cancel")} }
+func AddHelp() []string { return []string{i18n.T("ui.help.add"), i18n.T("ui.help.back")} }
+
+// PermissionsHelp: settings that apply to the whole application, not to this view.
+func PermissionsHelp() []string {
+	return []string{i18n.T("ui.help.change"), i18n.T("ui.help.back"), i18n.T("ui.help.applies")}
+}
+func PermissionModeHelp() []string {
+	return []string{i18n.T("ui.help.use_mode"), i18n.T("ui.help.back")}
+}
+func ChooseKindHelp() []string {
+	return []string{i18n.T("ui.help.choose_kind"), i18n.T("ui.help.cancel")}
+}
+
+// StatusText is the status code of Status as shown in a list item.
+func StatusText(status string) string {
+	switch status {
+	case "running", "stopped", "finished":
+		return i18n.T("status.word." + status)
+	}
+	return status
+}
+
+// widestLayout is the longest layout name, to size lists that show one.
+func widestLayout() string {
+	w := ""
+	for _, l := range mux.LayoutKeys {
+		if t := mux.LayoutLabel(l.Layout); Width(t) > Width(w) {
+			w = t
+		}
+	}
+	return w
+}
 
 // Rows of the view menu above and below the categories.
 const MenuTop, MenuBottom = 3, 2
@@ -36,17 +70,17 @@ func (a *App) ConsolesHelp() []string {
 	var out []string
 	for _, k := range a.Kinds() {
 		if k.Key != "" {
-			out = append(out, k.Key+"  Create "+k.Label)
+			out = append(out, i18n.T("ui.help.create_kind", k.Key, k.Label))
 		}
 	}
-	return append(out, "A  Add existing console", "-  Remove from this view", "N  Rename",
-		"R  Kill and replace here", "M/Del  Kill console", "Enter  Go to the selected console", "Q / Esc  Back")
+	return append(out, i18n.T("ui.help.add_existing"), i18n.T("ui.help.remove"), i18n.T("ui.help.rename"),
+		i18n.T("ui.help.replace"), i18n.T("ui.help.kill"), i18n.T("ui.help.go_to"), i18n.T("ui.help.back"))
 }
 
 func (a *App) MenuColumns(v store.View) []MenuColumn {
-	explorer := "no"
+	explorer := i18n.T("ui.menu.no")
 	if v.Explorer {
-		explorer = "yes"
+		explorer = i18n.T("ui.menu.yes")
 	}
 	var consoles []MenuItem
 	for _, k := range a.Kinds() {
@@ -54,21 +88,21 @@ func (a *App) MenuColumns(v store.View) []MenuColumn {
 		if key == "" {
 			key = " "
 		}
-		consoles = append(consoles, MenuItem{key, "New " + k.Label, "kind:" + k.ID})
+		consoles = append(consoles, MenuItem{key, i18n.T("ui.menu.new_kind", k.Label), "kind:" + k.ID})
 	}
-	consoles = append(consoles, MenuItem{"A", "Add existing…", "add"}, MenuItem{"S", "Consoles in this view…", "consoles"})
+	consoles = append(consoles, MenuItem{"A", i18n.T("menu.add_existing"), "add"}, MenuItem{"S", i18n.T("ui.menu.in_view"), "consoles"})
 	var layouts []MenuItem
 	for _, l := range mux.LayoutKeys {
-		layouts = append(layouts, MenuItem{l.Key, l.Label, "layout:" + l.Layout})
+		layouts = append(layouts, MenuItem{l.Key, mux.LayoutLabel(l.Layout), "layout:" + l.Layout})
 	}
-	layouts = append(layouts, MenuItem{"L", "Arrange marked…", "arrange"})
+	layouts = append(layouts, MenuItem{"L", i18n.T("menu.arrange_marked"), "arrange"})
 	return []MenuColumn{
-		{"CONSOLES", consoles},
-		{"LAYOUT", layouts},
-		{"VIEWS", []MenuItem{{"V", "New view…", "new-view"}, {"B", "Other views…", "views"}}},
-		{"MORE", []MenuItem{{"E", "Explorer: " + explorer, "explorer"}, {"P", "Forward ports…", "ports"},
-			{"W", "Agent permissions…", "permissions"},
-			{"D", "Leave without stopping (F10)", "leave"}, {"Q", "Back (Esc)", "back"}}},
+		{i18n.T("ui.menu.consoles"), consoles},
+		{i18n.T("ui.menu.layout"), layouts},
+		{i18n.T("ui.menu.views"), []MenuItem{{"V", i18n.T("ui.menu.new_view"), "new-view"}, {"B", i18n.T("ui.menu.other_views"), "views"}}},
+		{i18n.T("ui.menu.more"), []MenuItem{{"E", i18n.T("ui.menu.explorer", explorer), "explorer"}, {"P", i18n.T("ui.menu.ports"), "ports"},
+			{"W", i18n.T("ui.menu.permissions"), "permissions"},
+			{"D", i18n.T("ui.menu.leave"), "leave"}, {"Q", i18n.T("ui.menu.back"), "back"}}},
 	}
 }
 
@@ -129,7 +163,8 @@ func (a *App) MenuSizes() (int, int, int) {
 
 // ChooseSize is the width and height (with border) of a list popup.
 func ChooseSize(title string, items, help []string) (int, int) {
-	lines := append([]string{title, "000/000 | ↑↓ choose"}, help...)
+	// 999/999 is as wide as the widest counter Choose draws.
+	lines := append([]string{title, i18n.T("ui.choose.count", 999, 999)}, help...)
 	for _, it := range items {
 		lines = append(lines, "> "+it)
 	}
@@ -147,9 +182,10 @@ func (a *App) PermissionItems() []string {
 	for _, id := range PermissionAgents {
 		label := AgentLabel(id) + " | "
 		if p, e := a.Permission(id); e != nil {
-			label += "invalid: " + e.Error()
+			label += i18n.T("ui.perm.invalid", e.Error())
 		} else {
-			label += p.Label
+			text, _ := PermissionText(id, p)
+			label += text
 		}
 		out = append(out, label)
 	}
@@ -158,7 +194,8 @@ func (a *App) PermissionItems() []string {
 func PermissionModeItems(agent string) []string {
 	var out []string
 	for _, p := range Permissions(agent) {
-		out = append(out, p.Label+" — "+p.Detail)
+		label, detail := PermissionText(agent, p)
+		out = append(out, label+" — "+detail)
 	}
 	return out
 }
@@ -175,9 +212,12 @@ func (a *App) kindLabels() []string {
 func (a *App) DialogSizes() mux.Sizes {
 	var s mux.Sizes
 	s.MenuW, s.MenuH, s.MenuStacked = a.MenuSizes()
-	s.NewW, s.NewH = ChooseSize("NEW CONSOLE IN "+strings.Repeat("x", 24), a.kindLabels(), NewHelp)
-	s.ArrangeW, s.ArrangeRows = ChooseSize("ARRANGE "+strings.Repeat("x", 24)+" | 00/00 marked", []string{"[x] " + strings.Repeat("x", 30)}, ArrangeHelp)
-	s.BrowseW, s.BrowseRows = ChooseSize("SAVED VIEWS", []string{strings.Repeat("x", 24) + " | 00 consoles | Active on the left"}, BrowseHelp)
+	x24 := strings.Repeat("x", 24)
+	// Two-digit counters (10) are as wide as the 00 they stand for.
+	s.NewW, s.NewH = ChooseSize(i18n.T("ui.dialog.new_in", x24), a.kindLabels(), NewHelp())
+	s.ArrangeW, s.ArrangeRows = ChooseSize(i18n.T("ui.dialog.arrange", x24, 10, 10), []string{"[x] " + strings.Repeat("x", 30)}, ArrangeHelp())
+	s.BrowseW, s.BrowseRows = ChooseSize(i18n.T("ui.dialog.saved_views"), []string{i18n.T("ui.dialog.view_item", x24, 10, widestLayout())}, BrowseHelp())
+	s.TopMenus = a.TopMenuItems()
 	return s
 }
 
@@ -192,42 +232,47 @@ func (a *App) DialogSize(action, view string) (int, int) {
 		w, h, _ := a.MenuSizes()
 		return w, h
 	case "new", "replace":
-		return ChooseSize("NEW CONSOLE IN "+v.Name, a.kindLabels(), NewHelp)
+		return ChooseSize(i18n.T("ui.dialog.new_in", v.Name), a.kindLabels(), NewHelp())
 	case "kill":
 		return 64, 12
 	case "consoles":
 		programs, _ := a.Mux.Programs()
 		var items []string
 		for _, c := range members {
-			items = append(items, c.Name+" | "+Status(programs, c.ID))
+			items = append(items, c.Name+" | "+StatusText(Status(programs, c.ID)))
 		}
-		return ChooseSize("CONSOLES OF "+v.Name, items, a.ConsolesHelp())
+		return ChooseSize(i18n.T("ui.dialog.consoles_of", v.Name), items, a.ConsolesHelp())
 	case "add":
 		items, _ := a.Addable(view)
 		var labels []string
 		for _, c := range items {
-			labels = append(labels, c.Name+" | running")
+			labels = append(labels, c.Name+" | "+StatusText("running"))
 		}
-		return ChooseSize("ADD CONSOLE", labels, AddHelp)
+		return ChooseSize(i18n.T("ui.dialog.add"), labels, AddHelp())
 	case "arrange":
 		var items []string
 		for _, c := range members {
 			items = append(items, "[x] "+c.Name)
 		}
-		return ChooseSize("ARRANGE "+v.Name+" | 00/00 marked", items, ArrangeHelp)
+		return ChooseSize(i18n.T("ui.dialog.arrange", v.Name, 10, 10), items, ArrangeHelp())
 	case "views":
 		vs, _ := a.Store.Views()
 		var items []string
 		for _, x := range vs {
-			items = append(items, fmt.Sprintf("%s | 00 consoles | %s", x.Name, "Active on the left"))
+			items = append(items, i18n.T("ui.dialog.view_item", x.Name, 10, widestLayout()))
 		}
-		return ChooseSize("SAVED VIEWS", items, BrowseHelp)
+		return ChooseSize(i18n.T("ui.dialog.saved_views"), items, BrowseHelp())
 	case "ports":
 		return PortsSize(len(ListeningPorts()))
+	case "tags":
+		tags, _ := a.Store.Tags()
+		return 76, max(14, len(tags)+11)
+	case "language":
+		return 48, 10
 	case "permissions":
-		w, h := ChooseSize("AGENT PERMISSIONS", a.PermissionItems(), PermissionsHelp)
+		w, h := ChooseSize(i18n.T("ui.perm.title"), a.PermissionItems(), PermissionsHelp())
 		for _, id := range PermissionAgents {
-			mw, mh := ChooseSize(strings.ToUpper(AgentLabel(id))+" PERMISSIONS", PermissionModeItems(id), PermissionModeHelp)
+			mw, mh := ChooseSize(i18n.T("ui.perm.agent", strings.ToUpper(AgentLabel(id))), PermissionModeItems(id), PermissionModeHelp())
 			w, h = max(w, mw), max(h, mh)
 		}
 		return w, h
@@ -241,7 +286,8 @@ func (a *App) Addable(view string) ([]store.Console, error) {
 	if e != nil {
 		return nil, e
 	}
-	in, e := a.Store.Consoles(view)
+	// Minimized members belong to the view too: AddToView would only restore them.
+	in, e := a.Store.Members(view)
 	if e != nil {
 		return nil, e
 	}

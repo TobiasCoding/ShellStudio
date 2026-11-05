@@ -20,6 +20,7 @@ import (
 	"shellstudio/internal/app"
 	"shellstudio/internal/diagnostics"
 	"shellstudio/internal/extensions"
+	"shellstudio/internal/i18n"
 	"shellstudio/internal/platform"
 	"shellstudio/internal/runner"
 	"shellstudio/internal/store"
@@ -89,7 +90,7 @@ func run(args []string) error {
 		menu = true
 		args = args[1:]
 		if len(args) != 0 {
-			return errors.New("usage: shellstudio --menu")
+			return errors.New(i18n.T("cli.usage", "shellstudio --menu"))
 		}
 	}
 	if !menu && (len(args) == 0 || args[0] == "open" || args[0] == "." || args[0] == ".." || strings.Contains(args[0], "/")) {
@@ -98,7 +99,7 @@ func run(args []string) error {
 			args = args[1:]
 		}
 		if len(args) > 1 {
-			return errors.New("usage: shellstudio [DIRECTORY] or shellstudio open DIRECTORY")
+			return errors.New(i18n.T("cli.usage_open"))
 		}
 		if len(args) == 1 {
 			folder = args[0]
@@ -118,14 +119,14 @@ func run(args []string) error {
 			return diagnosticReport(args[1:])
 		case "update":
 			if len(args) > 2 || (len(args) == 2 && args[1] != "--check") {
-				return errors.New("usage: shellstudio update [--check]")
+				return errors.New(i18n.T("cli.usage", "shellstudio update [--check]"))
 			}
 			return startupUpdate(true, len(args) == 2)
 		case "version", "--version":
 			fmt.Println("ShellStudio", version)
 			return nil
 		case "help", "--help", "-h":
-			fmt.Print(help)
+			fmt.Print(i18n.T("cli.help"))
 			return nil
 		case "schema":
 			b, e := extensions.Assets.ReadFile("schema.json")
@@ -136,13 +137,13 @@ func run(args []string) error {
 			return nil
 		case "validate":
 			if len(args) != 2 {
-				return errors.New("usage: shellstudio validate manifest.json")
+				return errors.New(i18n.T("cli.usage", "shellstudio validate manifest.json"))
 			}
 			m, e := extensions.ImportPreview(args[1])
 			if e != nil {
 				return e
 			}
-			fmt.Printf("Valid: %s %s (schema %d)\n", m.ID, m.Version, m.Schema)
+			fmt.Println(i18n.T("cli.valid", m.ID, m.Version, m.Schema))
 			return nil
 		}
 	}
@@ -173,7 +174,7 @@ func run(args []string) error {
 		return doctor(a)
 	case "backup":
 		if len(args) != 2 {
-			return errors.New("usage: shellstudio backup /absolute/path.db")
+			return errors.New(i18n.T("cli.usage", "shellstudio backup /absolute/path.db"))
 		}
 		p, e := filepath.Abs(args[1])
 		if e != nil {
@@ -190,7 +191,7 @@ func run(args []string) error {
 		if e = s.Check(); e != nil {
 			return e
 		}
-		fmt.Println("Verified backup:", p)
+		fmt.Println(i18n.T("cli.backup_ok", p))
 		return nil
 	case "views":
 		vs, e := a.Store.Views()
@@ -210,7 +211,7 @@ func run(args []string) error {
 			return e
 		}
 		if len(rest) != 1 {
-			return errors.New("usage: shellstudio new-view [--folder PATH] NAME")
+			return errors.New(i18n.T("cli.usage", "shellstudio new-view [--folder PATH] NAME"))
 		}
 		nv, e := a.NewView(rest[0], *v["folder"], nil, "")
 		if e != nil {
@@ -223,7 +224,7 @@ func run(args []string) error {
 			return e
 		}
 		if *v["view"] == "" {
-			return errors.New("launch requires --view ID")
+			return errors.New(i18n.T("cli.launch_view"))
 		}
 		kind := *v["extension"]
 		if kind == "" {
@@ -237,7 +238,7 @@ func run(args []string) error {
 		return printJSON(c)
 	case "restart", "stop", "kill":
 		if len(args) != 2 {
-			return errors.New("usage: shellstudio " + args[0] + " CONSOLE_ID")
+			return errors.New(i18n.T("cli.usage", "shellstudio "+args[0]+" CONSOLE_ID"))
 		}
 		switch args[0] {
 		case "restart":
@@ -253,18 +254,18 @@ func run(args []string) error {
 		if len(args) == 2 && args[1] == "manage" {
 			return bubbleTea(a, ui.New(a, "extensions"))
 		}
-		return errors.New("usage: shellstudio extensions [manage]")
+		return errors.New(i18n.T("cli.usage", "shellstudio extensions [manage]"))
 	case "permissions":
 		return permissionsCommand(a, args[1:])
 	case "notes":
 		return bubbleTea(a, ui.New(a, "notes"))
 	case "viewer":
 		if len(args) < 2 || len(args) > 3 {
-			return errors.New("usage: shellstudio viewer agent-chat|agent-gantt [DATABASE]")
+			return errors.New(i18n.T("cli.usage", "shellstudio viewer agent-chat|agent-gantt [DATABASE]"))
 		}
 		kind := args[1]
 		if kind != "agent-chat" && kind != "agent-gantt" {
-			return errors.New("unknown viewer")
+			return errors.New(i18n.T("cli.unknown_viewer"))
 		}
 		file := "messages.sqlite3"
 		if kind == "agent-gantt" {
@@ -364,6 +365,11 @@ func internal(a *app.App, args []string) error {
 			return errors.New("usage: _explorer VIEW")
 		}
 		return tui.Explorer(a, args[1])
+	case "_minimized":
+		if len(args) != 2 {
+			return errors.New("usage: _minimized VIEW")
+		}
+		return tui.Minimized(a, args[1])
 	case "_close":
 		// Leaving nano closes its console. It runs inside the console that ends.
 		if len(args) != 2 {
@@ -399,6 +405,68 @@ func internal(a *app.App, args []string) error {
 			return report("Layout", a.ApplyLayout(f.View, *v["layout"], f.Console))
 		case "drop":
 			return report("Drop path", a.Drop(*v["origin"], *v["target"]))
+		case "tab":
+			return report("Change view", a.SwitchToTab(client, *v["target"]))
+		case "tagchoose":
+			// Popup fallback of the native tag menu.
+			s, e := tui.Open(false)
+			if e != nil {
+				return e
+			}
+			if err := tui.ChooseTag(s, a, *v["target"]); err != nil {
+				tui.Message(s, "ACTION COULD NOT BE COMPLETED", err.Error())
+			}
+			s.Close()
+			return nil
+		case "restore-in":
+			s, e := tui.Open(false)
+			if e != nil {
+				return e
+			}
+			view, err := tui.RestoreInDialog(s, a, client, *v["target"])
+			if err != nil {
+				a.RecordError(err, "Restore in another view")
+				tui.Message(s, "ACTION COULD NOT BE COMPLETED", err.Error())
+			}
+			s.Close()
+			if err == nil && view != "" {
+				return report("Restore in another view", a.Open(view, client))
+			}
+			return nil
+		case "rename-view", "close-view":
+			return report("View tab", tui.RunTopBar(a, args[1], client, *v["target"]))
+		case "toggle-explorer", "toggle-minimized":
+			f, e := a.Focus(client, pane, true)
+			if e != nil {
+				return report("Panels", e)
+			}
+			if args[1] == "toggle-explorer" {
+				return report("Panels", a.ToggleExplorer(f.View))
+			}
+			return report("Panels", a.ToggleMinimizedPanel(f.View))
+		case "topmenu":
+			return report("Menu", a.TopMenu(client, pane, *v["target"]))
+		case "describe":
+			// The console is the target (Minimized panel) or the focused one.
+			console := *v["target"]
+			if console == "" {
+				f, e := a.Focus(client, pane, false)
+				if e != nil {
+					return report("Description", e)
+				}
+				console = f.Console
+			}
+			s, e := tui.Open(false)
+			if e != nil {
+				return e
+			}
+			err := tui.DescribeDialog(s, a, console)
+			if err != nil {
+				a.RecordError(err, "Description")
+				tui.Message(s, "ACTION COULD NOT BE COMPLETED", err.Error())
+			}
+			s.Close()
+			return nil
 		case "move-before", "move-after":
 			f, e := a.Focus(client, pane, false)
 			if e != nil || f.Console == "" {
@@ -453,7 +521,7 @@ func internal(a *app.App, args []string) error {
 		a.ResizeWindow(*v["client"], *v["worker"], *sw["immediate"])
 		return nil
 	}
-	return fmt.Errorf("unknown command %q; use --help", args[0])
+	return errors.New(i18n.T("cli.unknown_command", args[0]))
 }
 
 // paneAction is what the header menus and finished consoles choose. It runs
@@ -479,7 +547,35 @@ func paneAction(a *app.App, action, pane, client, session, tty, target string) e
 	default:
 		f.Console = strings.TrimPrefix(session, "c-")
 	}
+	// Actions on a console listed in a panel (Minimized) name it explicitly;
+	// the pane then only identifies the view.
+	if session != "" && (client != "" || pane != "") {
+		f.Console = strings.TrimPrefix(session, "c-")
+	}
 	switch {
+	case action == "minimize" && f.Console != "" && f.View != "":
+		return a.Minimize(f.View, f.Console)
+	case action == "restore" && f.Console != "" && f.View != "":
+		return a.Restore(f.View, f.Console)
+	case action == "minprefs":
+		if e = tui.UpdateMinPrefs(a.Paths.Config, target); e == nil {
+			a.NotifyMinimized()
+		}
+		return e
+	case action == "panel-sizes" && pane != "":
+		return a.SavePanelSizes(pane)
+	case action == "maximize" && pane != "":
+		return a.Maximize(pane)
+	case action == "tagmenu" && f.Console != "":
+		return a.TagMenu(client, pane, f.Console)
+	case action == "tag" && f.Console != "":
+		tag := target
+		if tag == "none" {
+			tag = ""
+		}
+		return a.SetTag(f.Console, tag)
+	case action == "describe" && f.Console != "":
+		return a.OpenDialogFor("describe", client, pane, f.Console)
 	case action == "move":
 		l, e := platform.LockWait(filepath.Join(a.Paths.Runtime, "render.lock"), 10*time.Second)
 		if e != nil {
@@ -491,7 +587,7 @@ func paneAction(a *app.App, action, pane, client, session, tty, target string) e
 			return e
 		}
 		if other.View != f.View {
-			return errors.New("the consoles are in different views")
+			return errors.New(i18n.T("cli.other_views"))
 		}
 		if f.Console != "" && other.Console != "" {
 			if e = a.Store.Swap(f.View, f.Console, other.Console); e != nil {
@@ -594,44 +690,6 @@ func doctor(a *app.App) error {
 	return nil
 }
 
-const help = `ShellStudio — persistent consoles in views, with a file explorer
-
-Usage:
-  shellstudio [DIRECTORY]              Open the view of the current or selected folder
-  shellstudio open DIRECTORY           Open a folder named like a CLI command
-  shellstudio --menu                   Resume the last view
-  shellstudio update [--check]         Check releases; ask before installing
-  shellstudio notes                    Global Notes (also F3 → Notes inside a view)
-  shellstudio extensions [manage]      List extensions, or install/enable/configure them
-  shellstudio permissions [AGENT MODE] Default permissions of new Claude/Codex consoles
-  shellstudio viewer KIND [DATABASE]   Read-only agent-chat / agent-gantt viewer
-  shellstudio doctor                   Check storage, dependencies and extensions
-  shellstudio report [FILE | --stdout] Export a private diagnostic report to share
-  shellstudio validate MANIFEST        Validate a file or HTTPS manifest
-  shellstudio schema                   Print the public JSON schema
-  shellstudio backup DESTINATION       Create and verify a SQLite backup
-  shellstudio new-view [--folder PATH] NAME
-  shellstudio views | consoles
-  shellstudio launch --view ID [--extension ID] [--profile NAME] [--folder PATH] [--name NAME]
-  shellstudio restart CONSOLE_ID       Explicitly restart a stopped program
-  shellstudio stop CONSOLE_ID          End a program, keeping the console
-  shellstudio kill CONSOLE_ID          End a program and remove the console
-  shellstudio version
-
-Inside a view:
-  F2 view menu · F3 new console · F5 arrange · F7 views · F9 kill console
-  F10 leave (programs keep running) · F4 zoom · F6 / Ctrl+Alt+arrows change panel
-  Ctrl+Shift+←/→ or F8 change view · Alt+1–5 layouts · Alt+< / > move console
-  F2 → W chooses the permissions new Claude and Codex consoles start with.
-  Click a console header for its menu; drag it onto another console to swap them.
-  Drag a file from the explorer onto a console to type its path.
-
-Closing the terminal or SSH preserves programs. Restarting the computer stops them.
-Storage follows XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME and XDG_RUNTIME_DIR.
-Set SHELLSTUDIO_NO_UPDATE_CHECK=1 to skip the startup release check.
-ShellStudio is GPL-3.0-only; bundled MCP servers retain their MIT licenses.
-`
-
 // permissionsCommand lists or sets the preset new agent consoles start with.
 func permissionsCommand(a *app.App, args []string) error {
 	switch len(args) {
@@ -661,14 +719,15 @@ func permissionsCommand(a *app.App, args []string) error {
 			return e
 		}
 		if p.Dangerous {
-			fmt.Fprintln(os.Stderr, "Warning: new "+app.AgentLabel(args[0])+" consoles run without approvals. Use only in an isolated environment.")
+			fmt.Fprintln(os.Stderr, i18n.T("cli.perm_warning", app.AgentLabel(args[0])))
 		}
-		shown := "no flags"
+		shown := i18n.T("cli.no_flags")
 		if len(p.Args) > 0 {
 			shown = strings.Join(p.Args, " ")
 		}
-		fmt.Printf("New %s consoles: %s (%s)\n", app.AgentLabel(args[0]), p.Label, shown)
+		label, _ := app.PermissionText(args[0], p)
+		fmt.Println(i18n.T("cli.perm_set", app.AgentLabel(args[0]), label, shown))
 		return nil
 	}
-	return errors.New("usage: shellstudio permissions [claude|codex MODE]")
+	return errors.New(i18n.T("cli.usage", "shellstudio permissions [claude|codex MODE]"))
 }

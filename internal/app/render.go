@@ -13,6 +13,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"shellstudio/internal/diagnostics"
+	"shellstudio/internal/i18n"
 	"shellstudio/internal/mux"
 	"shellstudio/internal/platform"
 	"shellstudio/internal/store"
@@ -39,7 +40,7 @@ func (a *App) ConfigurePrograms(force bool) error {
 	}
 	for _, c := range cs {
 		if _, ok := programs[c.ID]; ok {
-			cmds = append(cmds, []string{"set-option", "-t", "=c-" + c.ID + ":", "@ss_name", c.Name})
+			cmds = append(cmds, a.Mux.HeaderCommands(c)...)
 		}
 	}
 	_, e = a.Mux.Batch(false, cmds...)
@@ -53,7 +54,12 @@ func (a *App) ConfigureViews() error {
 	}
 	s := a.DialogSizes()
 	s.Views = len(vs)
-	_, e = a.Mux.Batch(true, a.Mux.ViewsControls(s)...)
+	cmds := a.Mux.ViewsControls(s)
+	// The language of this workspace: see adoptServerLanguage.
+	cmds = append(cmds, []string{"set-option", "-g", "@ss_lang", i18n.Lang()},
+		[]string{"set-option", "-g", "@ss_tabs", mux.TabsFormat(sortViews(vs), 0)},
+		[]string{"set-option", "-g", "@ss_tabs_short", mux.TabsFormat(sortViews(vs), 10)})
+	_, e = a.Mux.Batch(true, cmds...)
 	return e
 }
 
@@ -106,7 +112,7 @@ func TerminalSize() (int, int) {
 func (a *App) render(view string) error {
 	v, e := a.Store.View(view)
 	if e != nil {
-		return fmt.Errorf("the view no longer exists: %w", e)
+		return fmt.Errorf("%s: %w", i18n.T("err.view_gone"), e)
 	}
 	session := mux.ViewSession(view)
 	rows, e := a.Mux.Run(true, "list-panes", "-s", "-t", "="+session, "-F",
@@ -117,11 +123,12 @@ func (a *App) render(view string) error {
 	// target error, depending on the tmux target resolution context.
 	missing := e != nil && (strings.HasPrefix(e.Error(), "can't find session:") || strings.HasPrefix(e.Error(), "can't find window:"))
 	if e != nil && !mux.NoServer(e) && !missing {
-		return fmt.Errorf("read view panels: %w", e)
+		return fmt.Errorf("%s: %w", i18n.T("err.read_panels"), e)
 	}
 	exists := e == nil
 	explorer, focused, version := "", "", ""
 	explorerDead := false
+	minimized, minimizedDead := "", false
 	var duplicates []string
 	var order []string
 	panes := map[string]pane{}
@@ -133,7 +140,7 @@ func (a *App) render(view string) error {
 			continue
 		}
 		if len(f) != 10 {
-			return errors.New("tmux returned invalid panel metadata; the view was not changed")
+			return errors.New(i18n.T("err.panel_metadata"))
 		}
 		version = f[7]
 		if f[5] != "1" {
@@ -149,6 +156,17 @@ func (a *App) render(view string) error {
 				duplicates = append(duplicates, explorer)
 			}
 			explorer, explorerDead = f[0], f[3] == "1"
+		} else if f[1] == "minimized" {
+			// The Minimized panel, like the explorer, is kept by kind: without
+			// this branch it would count as an empty pane and be killed.
+			if minimized != "" {
+				if f[4] != "1" {
+					duplicates = append(duplicates, f[0])
+					continue
+				}
+				duplicates = append(duplicates, minimized)
+			}
+			minimized, minimizedDead = f[0], f[3] == "1"
 		} else {
 			key := f[2]
 			if f[1] != "console" {
@@ -225,7 +243,8 @@ func (a *App) render(view string) error {
 						[]string{"select-pane", "-t", p.id, "-T", c.Name})
 				}
 			}
-			if same && (explorer != "") == (v.Explorer && width >= 70) && !explorerDead && applied == v.Layout {
+			wantExplorer, wantMinimized := leftColumn(v, width)
+			if same && (explorer != "") == wantExplorer && !explorerDead && (minimized != "") == wantMinimized && !minimizedDead && applied == v.Layout {
 				// Labels do not change geometry. Rebuilding here discarded manual
 				// divider sizes whenever a console was renamed in any view.
 				if len(rename) > 0 {
@@ -241,20 +260,34 @@ func (a *App) render(view string) error {
 			return e
 		}
 	}
+	if minimized != "" {
+		if _, e = a.Mux.Run(true, "break-pane", "-d", "-s", minimized, "-n", "_minimized"); e != nil {
+			return e
+		}
+	}
 	re := a.renderConsoles(v, exists, order, panes, members, state, focused, version)
 	// Even if an update fails, never leave an orphan auxiliary window.
-	info, e := a.Mux.Run(true, "display-message", "-p", "-t", "="+session+":", "#{pane_id}\t#{window_width}")
+	info, e := a.Mux.Run(true, "display-message", "-p", "-t", "="+session+":", "#{pane_id}\t#{window_width}\t#{window_height}")
 	if e != nil {
 		if re != nil {
 			return re
 		}
 		return e
 	}
-	target, cols, _ := strings.Cut(strings.TrimSpace(info), "\t")
-	width, _ := strconv.Atoi(cols)
-	if v.Explorer && width >= 70 {
-		size := strconv.Itoa(min(32, width/4))
-		var cmds [][]string
+	f := strings.Split(strings.TrimSpace(info), "\t")
+	if len(f) != 3 {
+		return errors.New(i18n.T("err.window_metadata"))
+	}
+	target := f[0]
+	width, _ := strconv.Atoi(f[1])
+	height, _ := strconv.Atoi(f[2])
+	wantExplorer, wantMinimized := leftColumn(v, width)
+	size := strconv.Itoa(LeftWidth(v, width))
+	var cmds [][]string
+	// The left column: the explorer on top, the Minimized panel under it, or
+	// either one alone at full height.
+	top := ""
+	if wantExplorer {
 		if explorer != "" {
 			cmds = append(cmds, []string{"join-pane", "-d", "-f", "-h", "-b", "-l", size, "-s", explorer, "-t", target})
 			// A new executable reloads the tree, which is a long-running process.
@@ -272,16 +305,86 @@ func (a *App) render(view string) error {
 				[]string{"set-option", "-p", "-t", explorer, "@ss_console", "explorer"},
 				[]string{"set-option", "-p", "-t", explorer, "@ss_name", "Files"})
 		}
-		if focused == explorer {
-			cmds = append(cmds, []string{"select-pane", "-t", explorer})
+		top = explorer
+	} else if explorer != "" {
+		a.Mux.Run(true, "kill-pane", "-t", explorer)
+		explorer = ""
+	}
+	if wantMinimized {
+		// Under the explorer (vertical split of it) or alone on the left.
+		join := []string{"-d", "-v", "-l", strconv.Itoa(MinimizedHeight(v, height)), "-t", top}
+		if top == "" {
+			join = []string{"-d", "-f", "-h", "-b", "-l", size, "-t", target}
 		}
+		if len(cmds) > 0 && top != "" {
+			// The explorer must be in place before splitting it.
+			if _, e = a.Mux.Batch(true, cmds...); e != nil {
+				return e
+			}
+			cmds = nil
+		}
+		if minimized != "" {
+			cmds = append(cmds, append(append([]string{"join-pane"}, join...), "-s", minimized))
+			if minimizedDead || version != a.Mux.Version {
+				cmds = append(cmds, []string{"respawn-pane", "-k", "-t", minimized, "exec " + a.Mux.Self("_minimized", view)})
+			}
+		} else {
+			args := append(append([]string{"split-window"}, join...), "-P", "-F", "#{pane_id}", "exec "+a.Mux.Self("_minimized", view))
+			o, e := a.Mux.Run(true, args...)
+			if e != nil {
+				return e
+			}
+			minimized = strings.TrimSpace(o)
+			cmds = append(cmds, []string{"set-option", "-p", "-t", minimized, "@ss_kind", "minimized"},
+				[]string{"set-option", "-p", "-t", minimized, "@ss_console", "minimized"},
+				[]string{"set-option", "-p", "-t", minimized, "@ss_name", "Minimized"})
+		}
+	} else if minimized != "" {
+		a.Mux.Run(true, "kill-pane", "-t", minimized)
+		minimized = ""
+	}
+	if focused != "" && (focused == explorer || focused == minimized) {
+		cmds = append(cmds, []string{"select-pane", "-t", focused})
+	}
+	if len(cmds) > 0 {
 		if _, e = a.Mux.Batch(true, cmds...); e != nil {
 			return e
 		}
-	} else if explorer != "" {
-		a.Mux.Run(true, "kill-pane", "-t", explorer)
 	}
 	return re
+}
+
+// leftColumn says which panels the left column of a view shows at a window
+// width: none below 70 columns.
+func leftColumn(v store.View, width int) (explorer, minimized bool) {
+	if width < 70 {
+		return false, false
+	}
+	return v.Explorer, v.MinimizedPanel
+}
+
+// LeftWidth is the width of the left column: the saved one, kept readable
+// and below half the window, or by default a quarter of the window up to 32
+// columns; a third up to 48 when it holds the Minimized table.
+func LeftWidth(v store.View, width int) int {
+	if v.ExplorerWidth > 0 {
+		return max(20, min(v.ExplorerWidth, width/2))
+	}
+	if v.MinimizedPanel && width >= 70 {
+		return max(min(32, width/4), min(48, width/3))
+	}
+	return min(32, width/4)
+}
+
+// MinimizedHeight is the height of the Minimized panel under the explorer:
+// the saved one, or 45% of the window, keeping at least 8 rows for it and 6
+// for the explorer.
+func MinimizedHeight(v store.View, height int) int {
+	h := height * 45 / 100
+	if v.MinimizedHeight > 0 {
+		h = v.MinimizedHeight
+	}
+	return max(min(8, height/2), min(h, height-7))
 }
 
 // renderConsoles rebuilds the console panes with few batched invocations.
@@ -296,7 +399,7 @@ func (a *App) renderConsoles(v store.View, exists bool, order []string, panes ma
 	}
 	cols, lines := TerminalSize()
 	type item struct{ key, name, state string }
-	items := []item{{"empty", "Empty view", ""}}
+	items := []item{{"empty", i18n.T("ui.empty.name"), ""}}
 	if len(members) > 0 {
 		items = nil
 		for _, c := range members {
@@ -355,7 +458,7 @@ func (a *App) renderConsoles(v store.View, exists bool, order []string, panes ma
 		case !exists:
 			// The new pane identifier arrives in the output, in order.
 			cmds = append(cmds, []string{"new-session", "-d", "-P", "-F", "#{pane_id}", "-s", session,
-				"-x", strconv.Itoa(cols), "-y", strconv.Itoa(lines), "-n", "view", command(it)})
+				"-x", strconv.Itoa(cols), "-y", strconv.Itoa(WindowHeight(lines)), "-n", "view", command(it)})
 			exists = true
 		default:
 			// Widening the canvas before splitting lets detached views be prepared.
@@ -376,7 +479,7 @@ func (a *App) renderConsoles(v store.View, exists bool, order []string, panes ma
 	for i := range place {
 		if place[i].pane == "" {
 			if len(created) == 0 {
-				return errors.New("tmux did not report a new pane")
+				return errors.New(i18n.T("err.no_new_pane"))
 			}
 			place[i].pane, created = created[0], created[1:]
 		}
@@ -510,7 +613,7 @@ func (a *App) Open(view, client string) error {
 	if client == "" && os.Getenv("SHELLSTUDIO_CONSOLE") != "" {
 		client = a.ConsoleClient(os.Getenv("SHELLSTUDIO_CONSOLE"))
 		if client == "" {
-			return errors.New("ShellStudio is already open in this terminal; use F7 to change views")
+			return errors.New(i18n.T("err.already_open"))
 		}
 	}
 	if client != "" || a.InsideViews() {
@@ -522,7 +625,7 @@ func (a *App) Open(view, client string) error {
 		return e
 	}
 	if !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stdout.Fd()) {
-		return errors.New("opening a view needs a terminal")
+		return errors.New(i18n.T("err.needs_terminal"))
 	}
 	a.Close()
 	env := []string{}
@@ -553,7 +656,7 @@ func (a *App) Focus(client, paneID string, staleFallback bool) (Focus, error) {
 			}
 		}
 		if session == "" {
-			return Focus{}, errors.New("the client is no longer connected")
+			return Focus{}, errors.New(i18n.T("err.client_gone"))
 		}
 	} else {
 		v, e := a.LastView()
@@ -588,7 +691,7 @@ func (a *App) Focus(client, paneID string, staleFallback bool) (Focus, error) {
 	if staleFallback && client != "" && active != nil {
 		return *active, nil
 	}
-	return Focus{}, errors.New("the selected panel no longer belongs to this view")
+	return Focus{}, errors.New(i18n.T("err.panel_not_member"))
 }
 
 // FocusConsole moves the focus of a view to one of its consoles.
@@ -612,12 +715,12 @@ func (a *App) FocusConsole(view, id string) {
 // PaneOwner returns the view, kind, console and name of a views-server pane.
 func (a *App) PaneOwner(p string) (Focus, error) {
 	if !strings.HasPrefix(p, "%") {
-		return Focus{}, errors.New("invalid panel")
+		return Focus{}, errors.New(i18n.T("err.invalid_panel"))
 	}
 	o, e := a.Mux.Run(true, "display-message", "-p", "-t", p, "#{session_name}\t#{@ss_kind}\t#{@ss_console}\t#{@ss_name}")
 	f := strings.Split(strings.TrimRight(o, "\n"), "\t")
 	if e != nil || len(f) != 4 || !strings.HasPrefix(f[0], "v-") {
-		return Focus{}, errors.New("the panel no longer belongs to a view")
+		return Focus{}, errors.New(i18n.T("err.panel_orphan"))
 	}
 	out := Focus{strings.TrimPrefix(f[0], "v-"), p, f[1], f[2], f[3]}
 	if f[1] != "console" {
@@ -633,7 +736,7 @@ func (a *App) PaneByTTY(tty string) (string, error) {
 			return p, nil
 		}
 	}
-	return "", errors.New("this console is not inside a view")
+	return "", errors.New(i18n.T("err.not_in_view"))
 }
 
 // ClientForPane routes dialogs from a nested console to its enclosing view.
@@ -648,7 +751,7 @@ func (a *App) ClientForPane(pane string) (string, error) {
 	}
 	clients := strings.Fields(o)
 	if len(clients) == 0 {
-		return "", errors.New("this view has no connected client")
+		return "", errors.New(i18n.T("err.no_client"))
 	}
 	// Mouse interaction records the originating outer client on the pane.
 	last, _ := a.Mux.Run(true, "show-option", "-pqv", "-t", pane, "@ss_client")

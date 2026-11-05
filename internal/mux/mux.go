@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -27,6 +28,10 @@ type Mux struct {
 	Tmux    string
 	Version string
 	Run     func(views bool, args ...string) (string, error)
+	// HeaderOptions returns the session options a console's header shows
+	// besides @ss_name: @ss_label (Kind · Name), @ss_tag and @ss_tag_color.
+	// An empty value unsets the option. Nil shows only the name.
+	HeaderOptions func(c store.Console) map[string]string
 }
 
 // A tmux message admits ~16 KiB ("command too long"); batches are split by size.
@@ -213,8 +218,8 @@ func (m *Mux) Start(c store.Console) error {
 			return e
 		}
 	}
-	cmds := [][]string{{"new-session", "-d", "-s", name, "-x", "120", "-y", "35", "-c", c.Folder, m.Binary, "_exec", c.ID},
-		{"set-option", "-t", "=" + name + ":", "@ss_name", c.Name}}
+	cmds := [][]string{{"new-session", "-d", "-s", name, "-x", "120", "-y", "35", "-c", c.Folder, m.Binary, "_exec", c.ID}}
+	cmds = append(cmds, m.HeaderCommands(c)...)
 	cmds = append(cmds, m.ProgramsControls()...)
 	if _, e = m.Batch(false, cmds...); e != nil {
 		// Never leave a program that no console describes.
@@ -239,15 +244,57 @@ func (m *Mux) SetName(id, name string) error {
 	if e != nil {
 		return e
 	}
-	// Redraw the headers of the nested clients showing it. A loop format would
-	// also visit this very command client, which has no status line.
+	m.redrawHeader(id)
+	return nil
+}
+
+// HeaderCommands set the options a console's header shows: @ss_name and, with
+// HeaderOptions, its label and tag. Keys are sorted so batches are stable.
+func (m *Mux) HeaderCommands(c store.Console) [][]string {
+	target := "=c-" + c.ID + ":"
+	cmds := [][]string{{"set-option", "-t", target, "@ss_name", c.Name}}
+	if m.HeaderOptions == nil {
+		return cmds
+	}
+	opts := m.HeaderOptions(c)
+	keys := make([]string, 0, len(opts))
+	for k := range opts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if opts[k] == "" {
+			cmds = append(cmds, []string{"set-option", "-u", "-t", target, k})
+		} else {
+			cmds = append(cmds, []string{"set-option", "-t", target, k, opts[k]})
+		}
+	}
+	return cmds
+}
+
+// SetHeader updates the name, label and tag of a running console and
+// redraws the clients showing it.
+func (m *Mux) SetHeader(c store.Console) error {
+	_, e := m.Batch(false, m.HeaderCommands(c)...)
+	if NoServer(e) || (e != nil && strings.Contains(e.Error(), "can't find session")) {
+		return nil
+	}
+	if e != nil {
+		return e
+	}
+	m.redrawHeader(c.ID)
+	return nil
+}
+
+func (m *Mux) redrawHeader(id string) {
+	// A loop format would also visit this very command client, which has
+	// no status line.
 	o, _ := m.Run(false, "list-clients", "-t", "=c-"+id, "-F", "#{client_name}")
 	var redraw [][]string
 	for _, c := range strings.Fields(o) {
 		redraw = append(redraw, []string{"refresh-client", "-S", "-t", c})
 	}
 	m.Batch(false, redraw...)
-	return nil
 }
 
 // AttachCommand is the nested client that shows a program inside a view pane.

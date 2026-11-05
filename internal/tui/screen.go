@@ -18,41 +18,82 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/mattn/go-runewidth"
+	"shellstudio/internal/theme"
 )
 
-type Style uint8
+// Attr is a set of text attributes.
+type Attr uint8
 
 const (
-	Normal    Style = 0
-	Bold      Style = 1
-	Dim       Style = 2
-	Reverse   Style = 4
-	Cyan      Style = 8
-	HeaderBar Style = 16
-	// Highlight is the selected row: black on cyan, bold.
-	Highlight = Cyan | Bold | Reverse
+	AttrBold Attr = 1 << iota
+	AttrDim
+	AttrReverse
+	AttrUnderline
 )
+
+// Style is a cell's colors and attributes. Fg and Bg are indexes of the
+// 256-color palette (no truecolor: Mosh renders these the same); 0 means the
+// default, light grey text on RGB black.
+type Style struct {
+	Fg, Bg uint8
+	Attr   Attr
+}
+
+var (
+	Normal  = Style{}
+	Bold    = Style{Attr: AttrBold}
+	Dim     = Style{Attr: AttrDim}
+	Reverse = Style{Attr: AttrReverse}
+	// Cyan is the accent: titles, keys and focus.
+	Cyan = Style{Fg: theme.Accent}
+	// HeaderBar is the header of an inactive console.
+	HeaderBar = Style{Fg: theme.HeaderFg, Bg: theme.HeaderBg}
+	// ActiveBar is the header of the focused console.
+	ActiveBar = Style{Fg: theme.White, Bg: theme.Accent, Attr: AttrBold}
+	// Highlight is the selected row: white on dark blue, bold.
+	Highlight = Style{Fg: theme.White, Bg: theme.Selection, Attr: AttrBold}
+	// Muted is secondary text: descriptions, dates and hints.
+	Muted = Style{Fg: theme.Muted}
+	// FieldStyle is the background of text fields and the table header.
+	FieldStyle = Style{Fg: theme.Text, Bg: theme.Panel}
+)
+
+// Color returns a style with the given foreground and background.
+func Color(fg, bg int) Style { return Style{Fg: uint8(fg), Bg: uint8(bg)} }
+
+// With adds attributes.
+func (s Style) With(a Attr) Style { s.Attr |= a; return s }
+
+// Has reports an attribute.
+func (s Style) Has(a Attr) bool { return s.Attr&a != 0 }
+
+// fills reports whether Draw extends the style to the end of the row.
+func (s Style) fills() bool { return s.Has(AttrReverse) || s.Bg != 0 }
 
 func sgr(s Style) string {
 	codes := []string{"0"}
-	if s&Bold != 0 {
+	if s.Has(AttrBold) {
 		codes = append(codes, "1")
 	}
-	if s&Dim != 0 {
+	if s.Has(AttrDim) {
 		codes = append(codes, "2")
 	}
-	if s&Reverse != 0 {
+	if s.Has(AttrUnderline) {
+		codes = append(codes, "4")
+	}
+	if s.Has(AttrReverse) {
 		codes = append(codes, "7")
 	}
-	switch {
-	case s&HeaderBar != 0:
-		codes = append(codes, "38;5;250", "48;5;235")
-	case s&Cyan != 0:
-		codes = append(codes, "36", "48;5;16")
-	default:
-		// Index 16 is RGB black; ANSI colour 0 can be grey in some terminals.
-		codes = append(codes, "37", "48;5;16")
+	if s.Fg != 0 {
+		codes = append(codes, "38;5;"+strconv.Itoa(int(s.Fg)))
+	} else {
+		codes = append(codes, "37")
 	}
+	bg := theme.Black
+	if s.Bg != 0 {
+		bg = int(s.Bg)
+	}
+	codes = append(codes, "48;5;"+strconv.Itoa(bg))
 	return "\x1b[" + strings.Join(codes, ";") + "m"
 }
 
@@ -210,7 +251,7 @@ func (s *Screen) DrawAt(y, x int, text string, style Style) {
 // Draw writes a row from column 1; a reversed style fills the whole row.
 func (s *Screen) Draw(y int, text string, style Style) {
 	text = clean(text)
-	if style&Reverse != 0 {
+	if style.fills() {
 		if pad := s.W - 2 - runewidth.StringWidth(text); pad > 0 {
 			text += strings.Repeat(" ", pad)
 		}
@@ -224,10 +265,50 @@ func (s *Screen) Header(text string) {
 	s.DrawAt(0, 0, text, HeaderBar)
 }
 
+// TrackDrag turns button-motion reports on or off, for panes that drag a
+// scrollbar thumb. It is off by default: motion reports flood the pane.
+func (s *Screen) TrackDrag(on bool) {
+	if s.out == nil {
+		return
+	}
+	if on {
+		s.out.WriteString("\x1b[?1002h")
+	} else {
+		s.out.WriteString("\x1b[?1002l")
+	}
+}
+
+// Frame returns the rows of the current frame as text, for tests and
+// diagnostics.
+func (s *Screen) Frame() []string {
+	out := make([]string, len(s.frame))
+	for y, row := range s.frame {
+		var b strings.Builder
+		for _, c := range row {
+			if c.r != 0 {
+				b.WriteRune(c.r)
+			}
+		}
+		out[y] = b.String()
+	}
+	return out
+}
+
+// StyleAt is the style of a cell of the current frame.
+func (s *Screen) StyleAt(y, x int) Style {
+	if y < 0 || y >= len(s.frame) || x < 0 || x >= len(s.frame[y]) {
+		return Normal
+	}
+	return s.frame[y][x].style
+}
+
 func (s *Screen) Refresh() {
+	if s.out == nil {
+		return // A test screen keeps only the frame.
+	}
 	var b strings.Builder
 	b.WriteString("\x1b[H")
-	cur := Style(255)
+	cur := Style{Fg: 1, Bg: 1, Attr: 0xff}
 	for y, row := range s.frame {
 		b.WriteString("\x1b[" + strconv.Itoa(y+1) + ";1H")
 		for _, c := range row {
@@ -245,6 +326,9 @@ func (s *Screen) Refresh() {
 	s.out.WriteString(b.String())
 }
 
+// errTestEndValue ends a program reading a test screen; see testscreen_test.go.
+var errTestEndValue any
+
 // Unget returns an event to be read again.
 func (s *Screen) Unget(e Event) { s.pending = append([]Event{e}, s.pending...) }
 
@@ -253,6 +337,9 @@ func (s *Screen) Read(timeout time.Duration) Event {
 	if len(s.pending) > 0 {
 		e := s.pending[0]
 		s.pending = s.pending[1:]
+		if e.Kind == 1000 && s.in == nil {
+			panic(errTestEndValue)
+		}
 		return e
 	}
 	var deadline <-chan time.Time

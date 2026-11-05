@@ -16,8 +16,10 @@ synchronous=NORMAL: the database remains consistent after a power cut, but
 recent metadata commits may be lost. Note writers serialize changes to the
 connection's synchronization setting. Preferences (last view, last console kind,
 recent folders) are replaced atomically without fsync; tree state is metadata.
-Schema 3 is current; newer schemas
-are rejected. Existing data is never silently reset after an integrity failure.
+Schema 4 is current; newer schemas
+are rejected. Schema 4 adds user tags (seeded once, never protected), a
+description and tag per console, a minimized flag and time per membership,
+and the saved left-column sizes and Minimized panel visibility per view. Existing data is never silently reset after an integrity failure.
 
 The program server invokes the private _exec entry point with a console ID. It
 loads saved argv/environment, changes directory and calls execve. Manifest fields
@@ -27,6 +29,25 @@ Stale IDs can fall back only for navigation; destructive actions reject them.
 F10 detaches the client and preserves its view session. Reopening reconciles
 panes by console ID without restarting running programs. Explorer state is saved
 per view. Migration from schema 2 enables the explorer on existing views.
+
+The views server's status line is the top bar: VISTAS, one tab per view (the
+@ss_tabs format, refreshed when views change) and the native menus New console,
+Arrange and More. Each element is a user range read from #{mouse_status_range};
+tmux keeps 15 characters of a range, so tabs carry "t" and 12 characters of the
+view ID. Window heights leave the bar's row. Console headers are the programs
+server's status line: @ss_label (Kind · Name), @ss_tag and fixed button slots
+at the right edge, which act on press and never start a drag.
+
+Minimizing is per membership: the console keeps its position, leaves the view's
+panes and is listed by the Minimized panel (kind "minimized", a long-running
+process like the explorer, below it in the left column). Restoring returns it to
+its place; reordering visible consoles keeps the slots of minimized ones. Closing
+a panel still unlinks the console. No program restarts in either case.
+
+User-visible text goes through internal/i18n (Spanish and English); logs and
+diagnostics stay in English. The language comes from config.json, then the
+locale; the views server publishes the language it was configured with
+(@ss_lang) so processes with another locale keep it.
 
 tmux handles resize and terminal output natively. Commands are batched and have
 a five-second deadline. Subprocess output is limited to 64 KiB, downloads to

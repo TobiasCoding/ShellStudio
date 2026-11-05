@@ -25,6 +25,13 @@ type Config struct {
 	// AgentPermissions names the launch preset of each agent; absent is the
 	// agent's own default.
 	AgentPermissions map[string]string `json:"agent_permissions,omitempty"`
+	// Language is auto (or empty), es or en.
+	Language string `json:"language,omitempty"`
+	// MinimizedColumns, MinimizedSort (column:asc|desc) and MinimizedFilter
+	// (a tag ID) are the preferences of the Minimized panel.
+	MinimizedColumns []string `json:"minimized_columns,omitempty"`
+	MinimizedSort    string   `json:"minimized_sort,omitempty"`
+	MinimizedFilter  string   `json:"minimized_filter,omitempty"`
 }
 
 func LoadConfig(dir string) (Config, error) {
