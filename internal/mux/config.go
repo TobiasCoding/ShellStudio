@@ -65,6 +65,49 @@ func ValidLayout(v string) bool {
 	return false
 }
 
+// MoveKeys move the focused console within its view. Alt+[ and Alt+] were the
+// old keys: Alt+[ is ESC [, the introducer of every CSI terminal report and
+// mouse event, and Alt+] is ESC ], the introducer of OSC reports. A report
+// that tmux cannot classify (split by SSH, or unsolicited) becomes M-[ plus
+// literal text, so consoles moved by themselves while digits were typed.
+var MoveKeys = []struct{ Key, Action string }{{"M-<", "move-before"}, {"M->", "move-after"}}
+
+// RetiredKeys were bound by earlier versions. A running views server keeps its
+// bindings across upgrades, so they are removed explicitly.
+var RetiredKeys = []string{"M-[", "M-]"}
+
+// ViewsEscapeTime is how long the views server waits for the rest of an
+// escape sequence. Its input comes from the user's terminal through SSH or
+// Mosh, where one mouse event (Claude and Codex track every movement) can
+// arrive in two packets. tmux 3.4 turns an expired partial sequence into
+// Alt+key plus literal text such as "<35;54;34M" typed into the console.
+// It is also the window in which Escape followed by a key becomes Alt+key
+// (Alt+1–5 and Alt+</> are bound), so it stays well below typing speed.
+const ViewsEscapeTime = "50"
+
+// terminalInput keeps the user's terminal from writing anything to tmux that
+// the user did not type. tmux 3.4 asks every VT100-like terminal for device
+// attributes, its version and colours on attach, and again for colours after
+// a resize. Replies that arrive split, late or twice (ConPTY and Windows
+// Terminal) are not recognised and are typed into the focused console as
+// "?61;4;6;7;14;21;22;..." and the like. tmux decides "VT100-like" from the
+// XT flag or a clear capability that starts with CSI; the shift-in prefix is a
+// no-op for every terminal. Both servers answer colour queries from
+// window-style, and the features VT100 detection would add are listed
+// explicitly: Windows Terminal keeps exactly the same features. Terminals that
+// tmux recognises from their reply (iTerm2, WezTerm, kitty, foot, mintty or an
+// enclosing tmux) lose auto-detected extras such as RGB and synchronized
+// output; terminfo and terminal-features still apply. The nested clients keep
+// querying: the views server answers them locally, in one piece.
+// Fixed slots after tmux's defaults, so each sync replaces them.
+func terminalInput() [][]string {
+	return [][]string{
+		{"set-option", "-sg", "escape-time", ViewsEscapeTime},
+		{"set-option", "-s", "terminal-overrides[9]", `*:XT@:clear=\017\E[H\E[2J`},
+		{"set-option", "-s", "terminal-features[9]", "*:bpaste:focus:title"},
+	}
+}
+
 func setg(option, value string) []string { return []string{"set-option", "-g", option, value} }
 
 // Both servers: black background everywhere, also in empty cells, and the
@@ -89,9 +132,6 @@ func commonOptions() [][]string {
 		setg("status-left-style", "fg=cyan,"+black+",bold"), setg("status-right-style", "fg=white,"+black),
 		setg("window-status-style", "fg=white,"+black), setg("window-status-current-style", "fg=cyan,"+black+",bold"),
 		setg("popup-style", "fg=white,"+black), setg("popup-border-style", "fg=cyan,"+black),
-		// Escape answers without the default half-second wait. It is paid twice
-		// (view and console are two nested tmux), so 10 ms.
-		{"set-option", "-sg", "escape-time", "10"},
 		setg("status", "off"),
 		{"set-option", "-s", "extended-keys", "on"},
 		{"set-option", "-s", "focus-events", "on"},
@@ -124,6 +164,9 @@ func (m *Mux) deadMenu(position string) []string {
 func (m *Mux) ProgramsControls() [][]string {
 	cmds := commonOptions()
 	cmds = append(cmds,
+		// Its terminal is a view pane: the views server writes each key or
+		// mouse event in one piece, so Escape needs no network margin here.
+		[]string{"set-option", "-sg", "escape-time", "10"},
 		setg("prefix", "None"), setg("status", "on"), setg("status-position", "top"),
 		setg("status-format[0]", header))
 	// The hook runs without a client: without -t, tmux would redraw the last one used.
@@ -188,6 +231,7 @@ func (m *Mux) PopupLine(client, action string, width, height int, pane string, b
 // ViewsControls belong to the views server: it contains clients, not programs.
 func (m *Mux) ViewsControls(s Sizes) [][]string {
 	cmds := commonOptions()
+	cmds = append(cmds, terminalInput()...)
 	// View windows keep their size during bursts of SSH client resizes; only the
 	// stable geometry is applied.
 	cmds = append(cmds,
@@ -252,8 +296,11 @@ func (m *Mux) ViewsControls(s Sizes) [][]string {
 		command := m.Self("_view", "layout", "--layout", l.Layout) + ` --client "#{client_name}" --pane "#{pane_id}"`
 		cmds = append(cmds, []string{"bind-key", "-n", "M-" + l.Key, "run-shell", command}, []string{"bind-key", l.Key, "run-shell", command})
 	}
-	for _, mv := range []struct{ key, action string }{{"M-[", "move-before"}, {"M-]", "move-after"}} {
-		cmds = append(cmds, []string{"bind-key", "-n", mv.key, "run-shell", m.Self("_view", mv.action) + ` --client "#{client_name}" --pane "#{pane_id}"`})
+	for _, key := range RetiredKeys {
+		cmds = append(cmds, []string{"unbind-key", "-q", "-n", key})
+	}
+	for _, mv := range MoveKeys {
+		cmds = append(cmds, []string{"bind-key", "-n", mv.Key, "run-shell", m.Self("_view", mv.Action) + ` --client "#{client_name}" --pane "#{pane_id}"`})
 	}
 	for _, d := range []struct{ key, dir string }{{"Left", "L"}, {"Right", "R"}, {"Up", "U"}, {"Down", "D"}} {
 		cmds = append(cmds, []string{"bind-key", "-r", d.key, "resize-pane", "-" + d.dir, "5"})
@@ -280,8 +327,8 @@ func (m *Mux) headerMenus(popups map[string]string) [][]string {
 	console := append(append([]string{}, head...),
 		"Rename", "n", popups["rename"],
 		"#{?window_zoomed_flag,Restore the layout,Zoom} (F4)", "z", "resize-pane -Z",
-		"Move before (Alt+[)", "[", viewAction("move-before"),
-		"Move after (Alt+])", "]", viewAction("move-after"),
+		"Move before (Alt+<)", "[", viewAction("move-before"),
+		"Move after (Alt+>)", "]", viewAction("move-after"),
 		"",
 		"New console (F3)", "c", popups["new"],
 		"Kill and replace here", "r", popups["replace"],

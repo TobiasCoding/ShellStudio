@@ -153,7 +153,7 @@ the same dialogs as the keyboard:
 | Ctrl+Alt+arrows | Focus a panel in that direction |
 | Ctrl+Shift+Left/Right or F8 / Shift+F8 | Change view |
 | Alt+1–5 | Columns, rows, grid, active on the left, active on top |
-| Alt+[ / Alt+] | Move the console before / after its neighbor |
+| Alt+< / Alt+> | Move the console before / after its neighbor |
 
 Click or right-click a console header to rename, zoom, move, replace, close its
 panel or end its program. Drag a header onto another console to exchange their

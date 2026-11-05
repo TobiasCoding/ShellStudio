@@ -621,7 +621,7 @@ Usage:
 Inside a view:
   F2 view menu · F3 new console · F5 arrange · F7 views · F9 kill console
   F10 leave (programs keep running) · F4 zoom · F6 / Ctrl+Alt+arrows change panel
-  Ctrl+Shift+←/→ or F8 change view · Alt+1–5 layouts · Alt+[ / ] move console
+  Ctrl+Shift+←/→ or F8 change view · Alt+1–5 layouts · Alt+< / > move console
   F2 → W chooses the permissions new Claude and Codex consoles start with.
   Click a console header for its menu; drag it onto another console to swap them.
   Drag a file from the explorer onto a console to type its path.

@@ -704,6 +704,36 @@ class Integration(unittest.TestCase):
         self.assertEqual([p["w"] for p in after], [p["w"] for p in before])
         self.assertEqual([p["console"] for p in after], [p["console"] for p in before])
 
+    def test_terminal_reports_never_move_consoles_or_type_digits(self):
+        view = json.loads(self.cli("new-view", "Reports"))
+        consoles = [json.loads(self.cli("launch", "--view", view["ID"])) for _ in range(3)]
+        t = self.terminal()
+        t.resize(160, 48)
+        t.expect("ACTIVE:")
+        t.pump(0.8)
+        # Replies to these probes come back through SSH/ConPTY and leaked into
+        # the focused console; the user's terminal must not be asked at all.
+        for probe in (b"\x1b[c", b"\x1b[>c", b"\x1b[>q", b"\x1b]10;?", b"\x1b]11;?"):
+            self.assertNotIn(probe, t.capture)
+        order = [p["console"] for p in self.panes()]
+        # Mouse motion arriving in two SSH packets, and an unsolicited report.
+        for i in range(6):
+            event = f"\x1b[<35;{60+i};20M".encode()
+            os.write(t.fd, event[:6])
+            t.pump(0.05)
+            os.write(t.fd, event[6:])
+            t.pump(0.05)
+        t.send(b"\x1b[54;64R", 1.0)
+        self.assertEqual([p["console"] for p in self.panes()], order)
+        t.send(b"\x1b<", 0.3)  # Alt+<: the focused console moves before its neighbor.
+        self.wait_for(lambda: [p["console"] for p in self.panes()] != order)
+        moved = [p["console"] for p in self.panes()]
+        self.assertEqual(sorted(moved), sorted(order))
+        self.assertEqual(self.tmux("views", "list-keys", "-T", "root").count("move-before"), 1)
+        for c in consoles:
+            captured = self.tmux("programs", "capture-pane", "-p", "-t", "=c-"+c["ID"]+":")
+            self.assertNotRegex(captured, r"35;\d|<35")
+
     def test_header_dialogs_keep_target_and_manual_geometry(self):
         view = json.loads(self.cli("new-view", "Dialogs"))
         consoles = [json.loads(self.cli("launch", "--view", view["ID"])) for _ in range(2)]
