@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -46,6 +47,8 @@ func Wrap(text string, width int) []string {
 	return out
 }
 
+var fkey = regexp.MustCompile(`^F([1-9]|1[0-2])$`)
+
 // HintKey is the key of a shortcut line ("N  Rename"): a click does the same.
 func HintKey(line string) string {
 	f := strings.Fields(line)
@@ -57,6 +60,9 @@ func HintKey(line string) string {
 		return k
 	}
 	first := strings.Split(f[0], "/")[0]
+	if fkey.MatchString(first) {
+		return strings.ToLower(first)
+	}
 	if r := []rune(first); len(r) == 1 {
 		return string(unicode.ToLower(r[0]))
 	}

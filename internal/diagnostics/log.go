@@ -182,13 +182,13 @@ func Command(args []string) string {
 	if len(args) == 0 {
 		return "workspace"
 	}
-	known := " open --menu update version --version help --help -h schema validate doctor report backup views consoles new-view launch restart stop kill extensions notes viewer _exec _empty _disconnected _explorer _minimized _close _sync _view _dialog _message _action _resize_window "
+	known := " open --menu update version --version help --help -h schema validate doctor report backup views consoles new-view launch restart stop kill extensions notes viewer _exec _track _empty _disconnected _explorer _minimized _close _sync _view _dialog _message _action _resize_window "
 	if !strings.Contains(known, " "+args[0]+" ") {
 		return "workspace-or-unknown"
 	}
 	cmd := args[0]
 	if len(args) > 1 && strings.HasPrefix(cmd, "_") {
-		actions := " next previous layout drop move-before move-after ports upload move rename explorer remove kill start drag end menu consoles new views arrange resize minimize restore maximize tagmenu tag describe tab topmenu tags language panel-sizes rename-view close-view toggle-explorer toggle-minimized restore-in minprefs zoomed "
+		actions := " next previous layout drop move-before move-after ports upload move rename explorer remove kill start drag end menu consoles new views arrange resize minimize restore maximize tagmenu tagchoose tagkey tag describe tab topmenu tags language panel-sizes rename-view close-view toggle-explorer toggle-minimized restore-in minprefs zoomed "
 		if strings.Contains(actions, " "+args[1]+" ") {
 			cmd += ":" + args[1]
 		}

@@ -52,7 +52,7 @@ func topBarDialog(s *Screen, a *app.App, action string, v store.View) error {
 	return nil
 }
 
-// isMenuAction is an F2 menu action that a top bar menu can open directly.
+// isMenuAction is an F1 menu action that a top bar menu can open directly.
 func isMenuAction(action string) bool {
 	return strings.HasPrefix(action, "kind:") || action == "new-view"
 }

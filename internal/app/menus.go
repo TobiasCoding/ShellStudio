@@ -4,16 +4,18 @@ package app
 import (
 	"errors"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/mattn/go-runewidth"
+
 	"shellstudio/internal/i18n"
 	"shellstudio/internal/mux"
-	"shellstudio/internal/theme"
 )
 
 // NativeItem is one entry of a native tmux menu (display-menu). An empty
-// Label is a separator. MenuItem is the entry of the F2 popup menu.
+// Label is a separator. MenuItem is the entry of the F1 popup menu.
 type NativeItem = mux.MenuEntry
 
 // ShowMenu opens a native menu in a client, at client coordinates x and y
@@ -44,51 +46,29 @@ func (a *App) ShowMenu(client, pane, x, y, title string, items []NativeItem) err
 	return exec.Command(a.Mux.Tmux, args...).Run()
 }
 
-// TagNativeItems lists the tags of a console's menu: each tag in its color (the
-// current one marked), No tag and Manage…. pane identifies the view; console
-// is the console to tag.
-func (a *App) TagNativeItems(client, pane, console string) ([]NativeItem, error) {
-	c, e := a.Store.Console(console)
-	if e != nil {
-		return nil, e
-	}
-	tags, e := a.Store.Tags()
-	if e != nil {
-		return nil, e
-	}
-	set := func(tag string) string {
-		return a.Mux.RunAction(mux.Join("tag", "--pane", pane, "--session", "c-"+console, "--target", tag))
-	}
-	var items []NativeItem
-	for i, t := range tags {
-		mark := "  "
-		if t.ID == c.TagID {
-			mark = "✓ "
-		}
-		key := ""
-		if i < 9 {
-			key = string(rune('1' + i))
-		}
-		items = append(items, NativeItem{Label: mark + "#[fg=" + theme.Colour(theme.TagColor(t.Color)) + "]" + theme.Glyphs.Dot + "#[default] " + mux.FormatText(t.Name), Key: key, Command: set(t.ID)})
-	}
-	items = append(items, NativeItem{},
-		NativeItem{Label: i18n.T("console.no_tag"), Key: "0", Command: set("none")},
-		NativeItem{Label: i18n.T("console.manage_tags"), Key: "m", Command: "run-shell -b " + mux.Quote(a.Mux.Self("_dialog", "tags", "--client", client, "--pane", pane))})
-	return items, nil
-}
-
 // TagMenu shows the tag menu of a console beside the pane that asked.
+//
+// It is a centered dialog, not a native menu: the Tag ▸ entry that opens it
+// is chosen on the press, and the release that follows would land on a
+// native menu opened under the pointer and close it (or pick a tag).
 func (a *App) TagMenu(client, pane, console string) error {
-	items, e := a.TagNativeItems(client, pane, console)
-	if e != nil {
-		return e
+	if _, e := a.Store.Console(console); e != nil {
+		return errors.New(i18n.T("err.console_gone"))
 	}
-	return a.ShowMenu(client, pane, "#{popup_pane_right}", "#{popup_pane_top}", i18n.T("console.tag"), items)
+	return a.OpenDialogFor("tagchoose", client, pane, console)
 }
 
 // OpenDialogFor opens a dialog about a given target (a console listed in the
 // Minimized panel, for example) in a popup of a client, and waits for it.
 func (a *App) OpenDialogFor(action, client, pane, target string) error {
+	argv := a.dialogForArgv(action, client, pane, target)
+	return exec.Command(argv[0], argv[1:]...).Run()
+}
+
+// dialogForArgv is the popup of OpenDialogFor. Its sizes are plain numbers:
+// a tmux command run from here has no client context in which a format
+// such as #{client_width} could expand ("height invalid").
+func (a *App) dialogForArgv(action, client, pane, target string) []string {
 	view := ""
 	if f, e := a.Focus(client, pane, true); e == nil {
 		view = f.View
@@ -98,8 +78,7 @@ func (a *App) OpenDialogFor(action, client, pane, target string) error {
 	if pane != "" {
 		args = append(args, "--pane", pane)
 	}
-	return exec.Command(a.Mux.Tmux, "-u", "-S", a.Mux.Socket(true), "display-popup", "-c", client, "-E",
-		"-x", "C", "-y", "C", "-w", mux.Fit(itoa(w), "#{client_width}"), "-h", mux.Fit(itoa(h), "#{client_height}"), a.Mux.Self(args...)).Run()
+	return a.Mux.ModalPopup(client, itoa(w), itoa(h), a.Mux.Self(args...))
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
@@ -197,4 +176,112 @@ func (a *App) ToggleMinimizedPanel(view string) error {
 		return e
 	}
 	return a.RefreshOpen(view)
+}
+
+var styleDirective = regexp.MustCompile(`#\[[^\]]*\]`)
+
+// statusText turns an expanded status line into plain text of width
+// columns: style directives go, and the part after #[align=right] is
+// right-aligned.
+func statusText(line string, width int) string {
+	right := ""
+	if i := strings.Index(line, "align=right"); i >= 0 {
+		if j := strings.LastIndex(line[:i], "#["); j >= 0 {
+			line, right = line[:j], line[j:]
+		}
+	}
+	plain := func(s string) string {
+		return strings.ReplaceAll(styleDirective.ReplaceAllString(s, ""), "##", "#")
+	}
+	l, r := plain(line), plain(right)
+	pad := width - runewidth.StringWidth(l) - runewidth.StringWidth(r)
+	if pad < 1 {
+		return runewidth.Truncate(l, width, "")
+	}
+	return l + strings.Repeat(" ", pad) + r
+}
+
+// Backdrop is what a client shows, as plain text rows of width×height: the
+// top bar and the visible panes with their dividers. Dialogs draw it dimmed
+// behind their box (tui.Backdrop).
+func (a *App) Backdrop(client string, width, height int) []string {
+	grid := make([][]rune, height)
+	for y := range grid {
+		grid[y] = []rune(strings.Repeat(" ", width))
+	}
+	put := func(y, x int, text string) {
+		if y < 0 || y >= height {
+			return
+		}
+		for _, r := range text {
+			w := runewidth.RuneWidth(r)
+			if w == 0 {
+				continue
+			}
+			if x < 0 || x+w > width {
+				break
+			}
+			grid[y][x] = r
+			if w == 2 {
+				grid[y][x+1] = 0
+			}
+			x += w
+		}
+	}
+	o, e := a.Mux.Run(true, "display-message", "-p", "-c", client, "#{window_id}\t#{status}\t#{status-position}\t#{window_zoomed_flag}")
+	f := strings.Split(strings.TrimSpace(o), "\t")
+	if e != nil || len(f) != 4 {
+		return nil
+	}
+	offset := 0
+	if f[1] == "on" {
+		row := 0
+		if f[2] == "top" {
+			offset = 1
+		} else {
+			row = height - 1
+		}
+		if s, e := a.Mux.Run(true, "display-message", "-p", "-c", client, "#{E:status-format[0]}"); e == nil {
+			put(row, 0, statusText(strings.TrimRight(s, "\n"), width))
+		}
+	}
+	panes, _ := a.Mux.Run(true, "list-panes", "-t", f[0], "-F", "#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{pane_active}")
+	for _, l := range strings.Split(strings.TrimSpace(panes), "\n") {
+		p := strings.Split(l, "\t")
+		if len(p) != 6 || (f[3] == "1" && p[5] != "1") {
+			continue
+		}
+		x, _ := strconv.Atoi(p[1])
+		y, _ := strconv.Atoi(p[2])
+		w, _ := strconv.Atoi(p[3])
+		h, _ := strconv.Atoi(p[4])
+		y += offset
+		text, e := a.Mux.Run(true, "capture-pane", "-p", "-t", p[0])
+		if e == nil {
+			for i, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+				if i >= h {
+					break
+				}
+				put(y+i, x, runewidth.Truncate(line, w, ""))
+			}
+		}
+		if f[3] != "1" {
+			// Dividers on the right and below, as tmux draws them.
+			for i := -1; i <= h; i++ {
+				put(y+i, x+w, "│")
+			}
+			put(y+h, x, strings.Repeat("─", max(0, w)))
+		}
+	}
+	out := make([]string, height)
+	for y, row := range grid {
+		var b strings.Builder
+		for _, r := range row {
+			if r != 0 {
+				b.WriteRune(r)
+			}
+		}
+		out[y] = b.String()
+	}
+	return out
 }

@@ -221,7 +221,7 @@ func (a *App) DeleteTag(id string) error {
 		a.Mux.SetHeader(c)
 	}
 	a.bumpMinimized()
-	return nil
+	return a.BindTagKeys()
 }
 
 // MoveTag shifts a tag one place up (-1) or down (+1).

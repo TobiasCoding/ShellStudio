@@ -398,14 +398,6 @@ func preview(s *Screen, root, rel string) {
 	}
 }
 
-type treeShortcut struct{ label, action string }
-
-// treeShortcuts are the clickable lines under the tree, in the current language.
-func treeShortcuts() []treeShortcut {
-	return []treeShortcut{{i18n.T("ui.tree.menu"), "menu"}, {i18n.T("ui.tree.new"), "new"},
-		{i18n.T("ui.tree.arrange"), "arrange"}, {i18n.T("ui.tree.kill"), "kill"}, {i18n.T("ui.tree.views"), "views"}, {i18n.T("ui.tree.leave"), "leave"}}
-}
-
 // Explorer is the file tree on the left of every view.
 func Explorer(a *app.App, view string) error {
 	v, e := a.Store.View(view)
@@ -572,32 +564,6 @@ func explore(a *app.App, view, root, tree string, s *Screen, onStart func(flush 
 		}
 		return i18n.T("ui.tree.in_nano")
 	}
-	shortcut := func(action string) error {
-		client := ""
-		if pane != "" {
-			client = a.ExplorerClient(pane, view)
-		}
-		if client == "" {
-			return errorf(i18n.T("ui.tree.no_client"))
-		}
-		if action == "leave" {
-			_, e := a.Mux.Run(true, "detach-client", "-t", client)
-			return e
-		}
-		o, e := a.Mux.Run(true, "list-panes", "-t", pane, "-F", "#{pane_id}\t#{@ss_kind}\t#{pane_last}")
-		if e != nil {
-			return e
-		}
-		target := pane
-		for _, l := range strings.Split(strings.TrimSpace(o), "\n") {
-			f := strings.Split(l, "\t")
-			if len(f) == 3 && f[1] == "console" && (target == pane || f[2] == "1") {
-				target = f[0]
-			}
-		}
-		return a.OpenDialog(action, client, target)
-	}
-	shortcuts := treeShortcuts()
 	closeButton, fixButton := i18n.T("ui.tree.err_close"), i18n.T("ui.tree.err_fix")
 	for {
 		item := a.CurrentError()
@@ -613,7 +579,7 @@ func explore(a *app.App, view, root, tree string, s *Screen, onStart func(flush 
 				errorLines[4] = string(r[:max(0, len(r)-1)]) + "…"
 			}
 		}
-		shortcutsTop := s.H - len(shortcuts)
+		bottom := s.H
 		statusRows, errorRows := 0, 0
 		if message != "" {
 			statusRows = 1
@@ -621,7 +587,7 @@ func explore(a *app.App, view, root, tree string, s *Screen, onStart func(flush 
 		if item != nil {
 			errorRows = len(errorLines) + 4
 		}
-		errorTop := shortcutsTop - statusRows - errorRows
+		errorTop := bottom - statusRows - errorRows
 		errorButtonY := errorTop + 2 + len(errorLines)
 		count := max(1, errorTop-2)
 		filtering := query != nil && len(filter.terms) > 0
@@ -708,10 +674,7 @@ func explore(a *app.App, view, root, tree string, s *Screen, onStart func(flush 
 			s.Draw(errorButtonY+1, sep, Dim)
 		}
 		if message != "" {
-			s.Draw(shortcutsTop-1, message, Normal)
-		}
-		for i, sc := range shortcuts {
-			s.Draw(shortcutsTop+i, sc.label, Dim)
+			s.Draw(bottom-1, message, Normal)
 		}
 		s.Refresh()
 		ev := s.Read(time.Second)
@@ -742,15 +705,6 @@ func explore(a *app.App, view, root, tree string, s *Screen, onStart func(flush 
 			continue
 		}
 		press, release := ev.Left()
-		if (press || release) && ev.X >= 1 && ev.X < s.W-1 && ev.Y >= shortcutsTop && ev.Y < s.H {
-			if release {
-				if e := shortcut(shortcuts[ev.Y-shortcutsTop].action); e != nil {
-					a.RecordError(e, "Explorer shortcut")
-					message = e.Error()
-				}
-			}
-			continue
-		}
 		if item != nil && query == nil {
 			button := ""
 			switch {
@@ -940,7 +894,7 @@ func explore(a *app.App, view, root, tree string, s *Screen, onStart func(flush 
 				}
 			case "e", "E":
 				message = edit(r.rel, r.dir)
-			case "n", "N":
+			case "f2", "n", "N":
 				leaf := path.Base(r.rel)
 				name, ok := Prompt(s, i18n.T("ui.tree.rename"), r.rel, leaf, 255, "")
 				if ok && name != "" && name != leaf {
@@ -985,11 +939,6 @@ func explore(a *app.App, view, root, tree string, s *Screen, onStart func(flush 
 		follow = true
 	}
 }
-
-type simpleError string
-
-func (e simpleError) Error() string { return string(e) }
-func errorf(s string) error         { return simpleError(s) }
 
 // windowsDrop reads the bracketed paste that Windows Terminal sends when a
 // file is dropped, or a path typed by an old terminal. The paste does not

@@ -63,7 +63,7 @@ func (a *App) ConfigureViews() error {
 		return e
 	}
 	a.fitAttachedWindows()
-	return nil
+	return a.BindTagKeys()
 }
 
 // fitAttachedWindows sizes the windows of attached views to their clients.
@@ -426,6 +426,7 @@ func (a *App) renderConsoles(v store.View, exists bool, order []string, panes ma
 		if e := a.ConfigurePrograms(false); e != nil {
 			return e
 		}
+		a.ensureTrackerFor(members, state)
 	}
 	cols, lines := TerminalSize()
 	type item struct{ key, name, state string }

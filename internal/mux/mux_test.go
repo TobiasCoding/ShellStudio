@@ -66,7 +66,7 @@ func TestViewControlsBindTheSesionesShortcuts(t *testing.T) {
 			keys[c[2]] = true
 		}
 	}
-	for _, k := range []string{"F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "C-S-DC", "C-S-Left", "C-S-Right",
+	for _, k := range []string{"F1", "F2", "S-F10", "C-NPage", "C-PPage", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "C-S-DC", "C-S-Left", "C-S-Right",
 		"C-M-Left", "M-1", "M-5", "M-<", "M->", "MouseDown1Pane", "MouseUp1Pane", "MouseDown3Pane", "MouseDrag1Pane",
 		"MouseDragEnd1Pane", "DoubleClick1Pane", "MouseDown1Border", "C-BSpace"} {
 		if !keys[k] {

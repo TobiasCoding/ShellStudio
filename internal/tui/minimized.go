@@ -575,7 +575,7 @@ func runMinimized(s *Screen, a *app.App, view, pane string) error {
 			st.search.Focused = !st.search.Focused
 		case "enter":
 			st.act(s, a, "restore")
-		case "r", "R":
+		case "f2", "r", "R":
 			st.act(s, a, "rename")
 		case "t", "T":
 			st.act(s, a, "tag")

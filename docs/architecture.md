@@ -5,6 +5,11 @@ attaching. Each logical view has one presentation session on views.sock. Its
 panes attach as clients to
 programs.sock, which owns the persistent processes. Removing presentation panes
 does not end programs. Clients showing the same view share focus and layout.
+Dialogs open in a borderless popup that covers the whole client: tmux 3.4
+ignores clicks outside a popup. The dialog draws the client's screen (status
+line and capture-pane of each visible pane) dimmed, then its own box, and
+treats a press outside the box as Escape. A release whose press it did not see
+is dropped, so the click that opened a dialog cannot act in it.
 The explorer and popup dialogs use a small terminal cell renderer; Bubble Tea is
 used for Notes, extension management and read-only viewers only.
 
@@ -16,12 +21,23 @@ synchronous=NORMAL: the database remains consistent after a power cut, but
 recent metadata commits may be lost. Note writers serialize changes to the
 connection's synchronization setting. Preferences (last view, last console kind,
 recent folders) are replaced atomically without fsync; tree state is metadata.
-Schema 4 is current; newer schemas
-are rejected. Schema 4 adds user tags (seeded once, never protected), a
+Schema 5 is current; newer schemas
+are rejected. Schema 5 adds a tmux key per tag (bound in the views server and
+listed in @ss_tag_keys, so removed keys are unbound) and a conversations table:
+the agent and conversation ID last seen per console. Schema 4 adds user tags (seeded once, never protected), a
 description and tag per console, a minimized flag and time per membership,
 and the saved left-column sizes and Minimized panel visibility per view. Existing data is never silently reset after an integrity failure.
 
-The program server invokes the private _exec entry point with a console ID. It
+The program server invokes the private _exec entry point with a console ID.
+For Claude and Codex consoles, _exec adds --resume ID (Claude) or resume ID
+(Codex) when a conversation is recorded, its transcript still exists and the
+profile does not choose one itself, and it starts the tracker (_track): one
+process per user, under a lock, detached through an intermediate process so
+the agent never inherits a child. Every ten seconds it reads the conversation
+of each live agent console from Claude's sessions/PID.json (checked against
+the process start time, since files survive a power cut and PIDs are reused)
+or from the rollout file Codex keeps open, and exits after a minute without
+agent consoles. Rendering a view starts it for consoles started earlier. It
 loads saved argv/environment, changes directory and calls execve. Manifest fields
 never become shell source. Relays and explorer UIs are presentation processes.
 Stable console IDs reconcile membership. Focus, attach and resize reuse panes.

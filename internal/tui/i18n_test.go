@@ -20,10 +20,6 @@ func helpLines(a *app.App) map[string][]string {
 		}
 		return out
 	}
-	var tree []string
-	for _, sc := range treeShortcuts() {
-		tree = append(tree, sc.label)
-	}
 	return map[string][]string{
 		"arrange":     app.ArrangeHelp(),
 		"browse":      app.BrowseHelp(),
@@ -33,8 +29,7 @@ func helpLines(a *app.App) map[string][]string {
 		"mode":        app.PermissionModeHelp(),
 		"kind":        app.ChooseKindHelp(),
 		"consoles":    a.ConsolesHelp(),
-		"tree":        tree,
-		"disconnected": keys("ui.disc.reconnect", "ui.disc.start", "ui.disc.close", "ui.disc.kill",
+		"disconnected": keys("ui.disc.reconnect", "ui.disc.start", "ui.disc.resume", "ui.disc.fresh", "ui.disc.close", "ui.disc.kill",
 			"ui.disc.new", "ui.disc.menu"),
 		"empty":   keys("ui.empty.create", "ui.empty.menu", "ui.empty.switch", "ui.empty.leave"),
 		"widgets": keys("ui.confirm.ok", "ui.confirm.cancel", "ui.prompt.accept", "ui.message.keys", "ui.choose.more"),
@@ -157,13 +152,6 @@ func TestEnglishTextMatchedByIntegrationTests(t *testing.T) {
 	a := tagsApp(t)
 	vs, _ := a.Store.Views()
 	v := vs[0]
-	var tree []string
-	for _, sc := range treeShortcuts() {
-		tree = append(tree, sc.label)
-	}
-	if strings.Join(tree, "|") != "F2 Menu|F3 New|F5 Arrange|F9 Kill|F7 Views|F10 Leave" {
-		t.Fatalf("tree shortcuts %q", tree)
-	}
 	for key, want := range map[string]string{
 		"ui.empty.title":  "This view is empty",
 		"ui.empty.create": "F3  Create a console here",
@@ -218,9 +206,9 @@ func TestEnglishTextMatchedByIntegrationTests(t *testing.T) {
 		all = append(all, strings.Join(c, " "))
 	}
 	controls := strings.Join(all, "\n")
-	for _, want := range []string{"FINISHED · Enter: options", "Restart", "Kill and replace here", "View menu (F2)",
-		"Close panel (the console keeps running)", "This panel ended #[default] Click: redo · close panel",
-		"Drop on a console to type the path", "Enter or click: restart · rename · close panel · kill console"} {
+	for _, want := range []string{"FINISHED · Enter: options", "Restart", "Kill and replace here", "View menu (F1)",
+		"Close panel (the console keeps running)", "This panel ended #[default] Enter or right click: redo · close panel",
+		"Drop on a console to type the path", "Enter or right click: restart · rename · close panel · kill console"} {
 		if !strings.Contains(controls, want) {
 			t.Errorf("tmux controls lack %q", want)
 		}

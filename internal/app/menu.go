@@ -267,6 +267,9 @@ func (a *App) DialogSize(action, view string) (int, int) {
 	case "tags":
 		tags, _ := a.Store.Tags()
 		return 76, max(14, len(tags)+11)
+	case "tagchoose":
+		tags, _ := a.Store.Tags()
+		return 60, len(tags) + 9
 	case "language":
 		return 48, 10
 	case "permissions":

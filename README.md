@@ -15,6 +15,26 @@ External programs have their own licenses. No agent installation is required.
 
 ## What's new
 
+- Claude and Codex consoles resume their conversation. While they run,
+  ShellStudio records which conversation each one is in; after the machine
+  restarts, Enter on the stopped console resumes it (N starts a new one).
+  `shellstudio restart --new-conversation ID` does the same from the command line.
+- Tags can have a keyboard shortcut: More ▸ Tags, select a tag and press S, then
+  the keys (Alt+letter or digit, or F1–F12 with Ctrl, Alt or Shift). The
+  shortcut tags the focused console, or removes the tag if it already has it.
+- Standard keys: F1 opens the view menu, F2 renames (the focused console, or the
+  selection in the file tree, the Minimized panel and dialogs), Shift+F10 opens
+  the menu of the focused panel and Ctrl+PgUp/PgDn change view.
+- Dialogs are modal: a click outside the dialog closes it. The workspace stays
+  visible, dimmed, behind it.
+- The file tree no longer lists keyboard shortcuts under it; the tree uses
+  those rows.
+- A left click on a finished console or ended panel only focuses it; its
+  options open with Enter, a right click or the ▼ menu.
+- Choosing Tag ▸ in a console menu opens a centered dialog that no longer
+  closes when the mouse button is released.
+- Description and Restore in another view (Minimized panel) open again; they
+  failed with "exit status 1".
 - A top bar lists your views as tabs; click one to switch. Its New console,
   Arrange and More menus open under the pointer.
 - Console headers read "Kind · Name" and have ─ (minimize), □ (maximize) and ▼
@@ -149,26 +169,27 @@ do not check for updates. No extension or agent is updated by this mechanism.
 
 ## Workspace
 
-The file tree occupies the left side at full height. Its clickable shortcuts open
-the same dialogs as the keyboard:
+The file tree occupies the left side at full height. Keyboard shortcuts:
 
 | Key | Action |
 | --- | --- |
-| F2 | View menu: consoles, layouts, views, explorer, ports and agent permissions |
+| F1 | View menu: consoles, layouts, views, explorer, ports and agent permissions |
+| F2 | Rename the focused console (in the tree, the Minimized panel and dialogs: the selection) |
 | F3 | Create a console; choose its kind and editable name |
 | F5 | Arrange all consoles, or create a view from a marked subset |
 | F7 | Browse, create or delete saved views |
 | F9 | Confirm ending the selected console |
 | F10 | Leave; programs keep running |
+| Shift+F10 | Menu of the focused panel |
 | F4 | Zoom or restore the selected panel |
 | F6 / Shift+F6 | Next / previous panel |
 | Ctrl+Alt+arrows | Focus a panel in that direction |
-| Ctrl+Shift+Left/Right or F8 / Shift+F8 | Change view |
+| Ctrl+PgDn/PgUp, Ctrl+Shift+Right/Left or F8 / Shift+F8 | Next / previous view |
 | Alt+1–5 | Columns, rows, grid, active on the left, active on top |
 | Alt+< / Alt+> | Move the console before / after its neighbor |
 
 The top bar shows one tab per view; right-click a tab to rename or close the
-view. New console ▼, Arrange ▼ and More ▼ hold the same actions as F2 plus tags,
+view. New console ▼, Arrange ▼ and More ▼ hold the same actions as F1 plus tags,
 the Minimized panel and the language.
 
 Click or right-click a console header to rename, zoom, move, replace, close its
@@ -178,14 +199,28 @@ Enter or a double click restores it to its place. □ zooms the panel and ▼ op
 its menu, which also sets the console's tag and description. Drag a header onto another console to exchange their
 positions. Drag borders to resize with live feedback. Drag a file from
 the tree onto a console to type its path. The tree supports search (/), previews,
-editing with nano (E), renaming (N) and reload (R). Its expanded folders and
-selection are saved per view. F2 can restore a hidden explorer.
+editing with nano (E), renaming (F2 or N) and reload (R). Its expanded folders and
+selection are saved per view. F1 can restore a hidden explorer.
 
-Dialogs accept keyboard navigation and mouse clicks; Escape cancels. Closing a
+Tags are managed under More ▸ Tags. Select a tag and press S to give it a
+shortcut: Alt plus a letter or digit, or F1–F12 with Ctrl, Alt or Shift. Keys
+that ShellStudio already uses are refused. The shortcut gives the focused
+console that tag, or removes it when the console already has it.
+
+Dialogs accept keyboard navigation and mouse clicks; Escape or a click outside
+the dialog cancels. Closing a
 panel preserves its program; killing a console requires confirmation. Finished
-and disconnected consoles show options to restart, reconnect or close the panel.
+and disconnected consoles show options to restart, reconnect or close the panel;
+on a finished console they open with Enter or a right click.
 Closing the UI or SSH connection preserves programs. After a machine restart,
-programs are stopped and must be explicitly restarted.
+programs are stopped and must be explicitly restarted. Claude and Codex consoles
+then resume the conversation they were in: ShellStudio checks every 10 seconds
+which conversation each running agent console is in (Claude's
+`sessions/PID.json`, the rollout file Codex keeps open) and starts the agent
+with `--resume ID` (Claude) or as `codex resume ID` when its transcript still
+exists. Restarting
+from a finished console's menu resumes too; N on the stopped console starts a
+new conversation instead.
 
 There is one presentation session per view. Two clients looking at the same view
 share focus, layout and pane size. Different views have separate focus; a console
@@ -237,7 +272,7 @@ prints; see [diagnostic reports](docs/diagnostics.md) for contents and limits.
 
 ## Agent permissions
 
-F2 → W (Agent permissions) is a global setting: it chooses the permission mode
+F1 → W (Agent permissions) is a global setting: it chooses the permission mode
 that new Claude and Codex consoles start with, in every view. It is stored as
 `agent_permissions` in `config.json`. Equivalent command line:
 
@@ -257,7 +292,7 @@ replaced afterwards; running consoles and restarts keep their original
 arguments. A profile configured with its own permission flags (extension
 manager → c) keeps them. An unknown stored mode blocks the launch with an error.
 
-F2 → Forward ports opens the SSH forwarding dialog. Dropping a Windows path in
+F1 → Forward ports opens the SSH forwarding dialog. Dropping a Windows path in
 the explorer opens an SCP upload dialog. OSC 52 clipboard copying needs support
 and permission in the local terminal. Ctrl+B then [ enters tmux copy mode.
 

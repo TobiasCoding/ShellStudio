@@ -50,8 +50,8 @@ func drawHints(s *Screen, hm *HitMap, y int, placed []placedHint) {
 
 func tagsHints() []hint {
 	return []hint{
-		{i18n.T("tags.hint_new"), "n"}, {i18n.T("tags.hint_rename"), "r"}, {i18n.T("tags.hint_color"), "c"},
-		{i18n.T("tags.hint_up"), "["}, {i18n.T("tags.hint_down"), "]"},
+		{i18n.T("tags.hint_new"), "n"}, {i18n.T("tags.hint_rename"), "f2"}, {i18n.T("tags.hint_color"), "c"},
+		{i18n.T("tags.hint_key"), "s"}, {i18n.T("tags.hint_up"), "["}, {i18n.T("tags.hint_down"), "]"},
 		{i18n.T("tags.hint_delete"), "delete"}, {i18n.T("tags.hint_close"), "esc"},
 	}
 }
@@ -183,7 +183,11 @@ func TagsDialog(s *Screen, a *app.App) {
 		rows := make([]tagRow, len(tags))
 		for i, t := range tags {
 			n, _ := a.TagUses(t.ID)
-			rows[i] = tagRow{t.Name, t.Color, usesText(n)}
+			note := usesText(n)
+			if t.Shortcut != "" {
+				note += " · " + app.KeyLabel(t.Shortcut)
+			}
+			rows[i] = tagRow{t.Name, t.Color, note}
 		}
 		selected = max(0, min(selected, len(tags)-1))
 		placed, hintRows := layoutHints(tagsHints(), s.W)
@@ -238,7 +242,7 @@ func TagsDialog(s *Screen, a *app.App) {
 			} else if t.ID != "" {
 				selected = len(tags)
 			}
-		case "r", "R", "enter":
+		case "f2", "r", "R", "enter":
 			if current.ID == "" {
 				break
 			}
@@ -247,6 +251,19 @@ func TagsDialog(s *Screen, a *app.App) {
 				current.Name = name
 				if err := a.UpdateTag(current); err != nil {
 					message = err.Error()
+				}
+			}
+		case "s", "S":
+			if current.ID == "" {
+				break
+			}
+			if key, ok := captureKey(s, current.Name, current.Shortcut); ok && key != current.Shortcut {
+				if err := a.SetTagShortcut(current.ID, key); err != nil {
+					message = err.Error()
+				} else if key == "" {
+					message = i18n.T("tags.key_removed", current.Name)
+				} else {
+					message = i18n.T("tags.key_set", app.KeyLabel(key), current.Name)
 				}
 			}
 		case "c", "C":
@@ -424,8 +441,11 @@ func ChooseTag(s *Screen, a *app.App, console string) error {
 		rows := make([]tagRow, 0, len(tags)+2)
 		for i, t := range tags {
 			note := ""
+			if t.Shortcut != "" {
+				note = app.KeyLabel(t.Shortcut)
+			}
 			if t.ID == c.TagID {
-				note = "✓"
+				note = strings.TrimSpace("✓ " + note)
 				if first {
 					selected = i
 				}
@@ -533,5 +553,80 @@ func LanguageDialog(s *Screen, a *app.App) error {
 			return nil
 		}
 		selected = i
+	}
+}
+
+// TagKey is the tmux name of a key that may be a tag shortcut (Alt+letter or
+// digit, F1–F12 with modifiers); "" for any other key.
+func TagKey(ev Event) string {
+	if ev.Kind != KeyEvent {
+		return ""
+	}
+	if k, ok := strings.CutPrefix(ev.Key, "alt+"); ok && len(k) == 1 {
+		if c := k[0]; (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			return "M-" + k
+		}
+		return ""
+	}
+	if len(ev.Key) < 2 || ev.Key[0] != 'f' {
+		return ""
+	}
+	n := strings.ToUpper(ev.Key)
+	if n == "F" || strings.Trim(n[1:], "0123456789") != "" {
+		return ""
+	}
+	prefix := ""
+	if ev.Ctrl {
+		prefix += "C-"
+	}
+	if ev.Alt {
+		prefix += "M-"
+	}
+	if ev.Shift {
+		prefix += "S-"
+	}
+	return prefix + n
+}
+
+// captureKey asks for the shortcut of a tag. Backspace or Delete removes it;
+// ok is false when cancelled.
+func captureKey(s *Screen, name, current string) (string, bool) {
+	message := ""
+	for {
+		s.Erase()
+		s.Draw(0, i18n.T("tags.key_title", name), Bold)
+		y := 2
+		for _, l := range Wrap(i18n.T("tags.key_detail"), max(10, s.W-3)) {
+			s.Draw(y, l, Normal)
+			y++
+		}
+		currentText := i18n.T("tags.key_none")
+		if current != "" {
+			currentText = app.KeyLabel(current)
+		}
+		s.Draw(y+1, i18n.T("tags.key_current", currentText), Muted)
+		s.Draw(y+3, message, Bold)
+		s.Draw(s.H-1, i18n.T("tags.key_keys"), Muted)
+		s.Refresh()
+		ev := s.Read(-1)
+		if ev.Kind == MouseEvent {
+			if press, _ := ev.Left(); press && ev.Y == s.H-1 {
+				return "", false
+			}
+			continue
+		}
+		if ev.Kind != KeyEvent {
+			continue
+		}
+		switch ev.Key {
+		case "esc":
+			return "", false
+		case "backspace", "delete":
+			return "", true
+		}
+		if k := TagKey(ev); k != "" {
+			return k, true
+		}
+		message = i18n.T("tags.key_invalid")
 	}
 }

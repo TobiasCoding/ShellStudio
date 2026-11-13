@@ -100,6 +100,14 @@ func ValidLayout(v string) bool {
 // literal text, so consoles moved by themselves while digits were typed.
 var MoveKeys = []struct{ Key, Action string }{{"M-<", "move-before"}, {"M->", "move-after"}}
 
+// Standard keys: F1 opens the view menu (help and every action), F2 renames,
+// as on desktops, and Shift+F10 opens the context menu of the focused panel.
+const (
+	MenuKey        = "F1"
+	RenameKey      = "F2"
+	ContextMenuKey = "S-F10"
+)
+
 // RetiredKeys were bound by earlier versions. A running views server keeps its
 // bindings across upgrades, so they are removed explicitly.
 var RetiredKeys = []string{"M-[", "M-]"}
@@ -207,7 +215,12 @@ func (m *Mux) ProgramsControls() [][]string {
 		setg("remain-on-exit-format", deadFormat()),
 		// They only change something in a finished pane; otherwise the key is unchanged.
 		[]string{"bind-key", "-n", "Enter", "if-shell", "-F", "#{pane_dead}", Join(m.deadMenu("C")...), "send-keys Enter"},
+		// A left click on a finished console only focuses it: its options
+		// open with Enter, a right click or the header's ▼ menu.
 		[]string{"bind-key", "-n", "MouseDown1Pane", "if-shell", "-F", "#{pane_dead}",
+			Script([]string{"select-pane", "-t", "="}),
+			Script([]string{"select-pane", "-t", "="}, []string{"send-keys", "-M"})},
+		[]string{"bind-key", "-n", "MouseDown3Pane", "if-shell", "-F", "#{pane_dead}",
 			Script([]string{"select-pane", "-t", "="}, m.deadMenu("M")),
 			Script([]string{"select-pane", "-t", "="}, []string{"send-keys", "-M"})})
 	// The status line is the header: no window switching with the wheel nor window menus.
@@ -241,7 +254,7 @@ func itoa(n int) string { return fmt.Sprint(n) }
 // loop opens it as soon as the first one closes.
 func (m *Mux) PopupShell(action, width, height string) string {
 	command := m.Self("_view", action, "--client") + ` "#{client_name}" --pane "#{pane_id}"`
-	popup := Join(m.Tmux, "-u", "-S", m.Socket(true), "display-popup", "-c", "#{client_name}", "-E", "-x", "C", "-y", "C", "-w", width, "-h", height, command)
+	popup := Join(m.ModalPopup("#{client_name}", width, height, command)...)
 	marker := Quote(m.Paths.Runtime) + "/next-#{client_pid}"
 	return "f=" + marker + `; rm -f "$f"; ` + popup + `; while [ -s "$f" ]; do c=$(cat "$f"); rm -f "$f"; eval "$c"; done`
 }
@@ -255,7 +268,22 @@ func (m *Mux) PopupLine(client, action string, width, height int, pane string, b
 	if back {
 		args = append(args, "--back")
 	}
-	return Join(m.Tmux, "-u", "-S", m.Socket(true), "display-popup", "-c", client, "-E", "-x", "C", "-y", "C", "-w", itoa(width), "-h", itoa(height), m.Self(args...))
+	return Join(m.ModalPopup(client, itoa(width), itoa(height), m.Self(args...))...)
+}
+
+// ModalEnv tells a dialog the size of its box and its client (see
+// tui.Screen): "WIDTH,HEIGHT,CLIENT".
+const ModalEnv = "SHELLSTUDIO_MODAL"
+
+// ModalPopup is the command line of a dialog's popup. tmux 3.4 ignores
+// clicks outside a popup, so the popup is borderless and covers the whole
+// client; the dialog draws the workspace dimmed behind its own box of
+// width×height (with its border; a number or a percentage) and closes on a
+// click outside it. Sizes are given to the dialog, not to tmux: no format
+// needs a client context to expand.
+func (m *Mux) ModalPopup(client, width, height, command string) []string {
+	return []string{m.Tmux, "-u", "-S", m.Socket(true), "display-popup", "-c", client, "-E", "-B",
+		"-x", "0", "-y", "0", "-w", "100%", "-h", "100%", "-e", ModalEnv + "=" + width + "," + height + "," + client, command}
 }
 
 // ViewsControls belong to the views server: it contains clients, not programs.
@@ -293,7 +321,8 @@ func (m *Mux) ViewsControls(s Sizes) [][]string {
 	cmds = append(cmds, []string{"unbind-key", "-q", "-n", "C-S-Up"}, []string{"unbind-key", "-q", "-n", "C-S-Down"},
 		// A finished program's Enter menu runs in the nested client. Remember
 		// which outer client requested it so its dialogs return to that user.
-		[]string{"bind-key", "-n", "Enter", Script([]string{"set-option", "-pF", "@ss_client", "#{client_name}"}, []string{"send-keys", "Enter"})},
+		[]string{"bind-key", "-n", "Enter", "if-shell", "-F", "#{pane_dead}", m.deadPanelMenu("C"),
+			Script([]string{"set-option", "-pF", "@ss_client", "#{client_name}"}, []string{"send-keys", "Enter"})},
 		[]string{"bind-key", "-n", "F6", "select-pane", "-t", ":.+"},
 		[]string{"bind-key", "-n", "S-F6", "select-pane", "-t", ":.-"},
 		[]string{"bind-key", "-n", "F4", "resize-pane", "-Z"},
@@ -310,7 +339,7 @@ func (m *Mux) ViewsControls(s Sizes) [][]string {
 		"kill":    {Fit("64", w), Fit("12", h)},
 	}
 	popups := map[string]string{}
-	for _, b := range []struct{ key, action, region string }{{"F2", "menu", "menu"}, {"F3", "new", "new"},
+	for _, b := range []struct{ key, action, region string }{{MenuKey, "menu", "menu"}, {"F3", "new", "new"},
 		{"F7", "views", "views"}, {"F5", "arrange", "arrange"}, {"F9", "kill", "kill"}} {
 		size := sizes[b.action]
 		popup := m.PopupShell(b.action, size[0], size[1])
@@ -322,6 +351,11 @@ func (m *Mux) ViewsControls(s Sizes) [][]string {
 	}
 	popups["replace"] = "run-shell " + Quote(m.PopupShell("replace", sizes["new"][0], sizes["new"][1]))
 	popups["rename"] = "run-shell " + Quote(m.PopupShell("rename", Fit("64", w), Fit("12", h)))
+	// F2 renames the focused console; the explorer and the Minimized panel
+	// receive it and rename their selection.
+	cmds = append(cmds, []string{"bind-key", "-n", RenameKey, "if-shell", "-F", isConsole, popups["rename"], "send-keys " + RenameKey},
+		// Shift+F10 is the context menu of the focused panel, as on desktops.
+		[]string{"bind-key", "-n", ContextMenuKey, "run-shell", "-C", headerMenuKeyboard})
 	// Ports are counted when opening: the program measures their popup.
 	popups["ports"] = "run-shell " + Quote(m.Self("_dialog", "ports", "--client")+` "#{client_name}" --pane "#{pane_id}"`)
 	popups["tags"] = "run-shell -b " + Quote(m.Self("_dialog", "tags", "--client")+` "#{client_name}" --pane "#{pane_id}"`)
@@ -345,7 +379,7 @@ func (m *Mux) ViewsControls(s Sizes) [][]string {
 	for _, sw := range []struct {
 		keys   []string
 		action string
-	}{{[]string{"C-S-Right", "F8"}, "next"}, {[]string{"C-S-Left", "S-F8"}, "previous"}} {
+	}{{[]string{"C-S-Right", "F8", "C-NPage"}, "next"}, {[]string{"C-S-Left", "S-F8", "C-PPage"}, "previous"}} {
 		for _, key := range sw.keys {
 			cmds = append(cmds, []string{"bind-key", "-n", key, "run-shell", m.Self("_view", sw.action) + ` --client "#{client_name}"`})
 		}
@@ -360,7 +394,22 @@ func (m *Mux) headerMenus(popups map[string]string) [][]string {
 	viewAction := func(action string) string {
 		return "run-shell -b " + Quote(m.Self("_view", action)+` --client "#{client_name}" --pane "#{pane_id}"`)
 	}
-	head := []string{"display-menu", "-O", "-T", "#[align=centre] #{@ss_name} ", "-t", "=", "-x", "M", "-y", "M"}
+	var out [][]string
+	// The mouse variant opens at the pointer; the keyboard one (Shift+F10)
+	// at the lower left of the focused pane.
+	for _, variant := range []struct {
+		prefix string
+		head   []string
+	}{
+		{menuOption, []string{"display-menu", "-O", "-T", "#[align=centre] #{@ss_name} ", "-t", "=", "-x", "M", "-y", "M"}},
+		{menuOption + "kbd_", []string{"display-menu", "-O", "-T", "#[align=centre] #{@ss_name} ", "-x", "P", "-y", "P"}},
+	} {
+		out = append(out, m.paneMenus(variant.prefix, variant.head, popups, viewAction)...)
+	}
+	return out
+}
+
+func (m *Mux) paneMenus(prefix string, head []string, popups map[string]string, viewAction func(string) string) [][]string {
 	console := append(append([]string{}, head...),
 		i18n.T("tmux.rename"), "n", popups["rename"],
 		i18n.T("console.description"), "d", m.RunAction(`describe --client "#{client_name}" --pane "#{pane_id}"`),
@@ -398,20 +447,33 @@ func (m *Mux) headerMenus(popups map[string]string) [][]string {
 		i18n.T("menu.toggle_minimized"), "o", "run-shell -b "+Quote(m.Self("_view", "toggle-minimized")+` --client "#{client_name}" --pane "#{pane_id}"`),
 		"",
 		i18n.T("tmux.view_menu"), "v", popups["menu"])
-	return [][]string{setg(menuOption+"console", Join(console...)), setg(menuOption+"tree", Join(tree...)), setg(menuOption+"empty", Join(empty...)),
-		setg(menuOption+"minimized", Join(minimized...))}
+	return [][]string{setg(prefix+"console", Join(console...)), setg(prefix+"tree", Join(tree...)), setg(prefix+"empty", Join(empty...)),
+		setg(prefix+"minimized", Join(minimized...))}
 }
 
 // run-shell -C expands the format (chooses the menu for the pane) and keeps the
 // mouse event: the menu appears where the click happened.
-var headerMenu = Join("run-shell", "-C", "#{?"+isConsole+",#{"+menuOption+"console},"+
-	"#{?#{==:#{@ss_kind},explorer},#{"+menuOption+"tree},"+
-	"#{?#{==:#{@ss_kind},minimized},#{"+menuOption+"minimized},#{"+menuOption+"empty}}}}")
+var headerMenu = Join("run-shell", "-C", paneMenuChoice(menuOption))
 
-func (m *Mux) deadPanelMenu() string {
-	return Join("display-menu", "-O", "-T", "#[align=centre] #{@ss_name} ", "-t", "=", "-x", "M", "-y", "M",
+// headerMenuKeyboard is the format choosing the keyboard variant (Shift+F10).
+var headerMenuKeyboard = paneMenuChoice(menuOption + "kbd_")
+
+func paneMenuChoice(prefix string) string {
+	return "#{?" + isConsole + ",#{" + prefix + "console}," +
+		"#{?#{==:#{@ss_kind},explorer},#{" + prefix + "tree}," +
+		"#{?#{==:#{@ss_kind},minimized},#{" + prefix + "minimized},#{" + prefix + "empty}}}}"
+}
+
+// deadPanelMenu are the options of a views pane whose program ended, at the
+// pointer (M) or centered (C, from the keyboard).
+func (m *Mux) deadPanelMenu(position string) string {
+	args := []string{"display-menu", "-O", "-T", "#[align=centre] #{@ss_name} "}
+	if position == "M" {
+		args = append(args, "-t", "=")
+	}
+	return Join(append(args, "-x", position, "-y", position,
 		i18n.T("tmux.redo_panel"), "r", "respawn-pane -k",
-		i18n.T("tmux.close_panel"), "q", m.RunAction("remove --pane #{pane_id}"))
+		i18n.T("tmux.close_panel"), "q", m.RunAction("remove --pane #{pane_id}"))...)
 }
 
 // zoomHook tells the console headers which pane of a view is zoomed: the
@@ -460,8 +522,10 @@ func (m *Mux) dragBindings() [][]string {
 	resizeBindings = append(resizeBindings, []string{"bind-key", "-n", "MouseDrag1Border", "resize-pane", "-M"})
 	selectPane := []string{"select-pane", "-t", "="}
 	out := [][]string{
+		// A left click on an ended panel only focuses it; its options open
+		// with Enter or a right click.
 		{"bind-key", "-n", "MouseDown1Pane", "if-shell", "-F", "#{pane_dead}",
-			Script(selectPane, dragReset) + " ; " + m.deadPanelMenu(),
+			Script(selectPane, dragReset),
 			Script([]string{"if-shell", "-F", onHeader,
 				// The header is not forwarded: it belongs to the view, not the
 				// program. Its buttons act at once; elsewhere a press arms the
@@ -485,9 +549,11 @@ func (m *Mux) dragBindings() [][]string {
 		{"bind-key", "-n", "MouseUp1Pane", "if-shell", "-F", "#{&&:" + dragging + ",#{!=:#{" + dragKind + "},path}}",
 			Script(dragReset, []string{"if-shell", "-F", "#{&&:" + onHeader + ",#{==:#{pane_id},#{" + dragPane + "}}}", headerMenu}),
 			Script(dragReset, []string{"send-keys", "-M"})},
-		{"bind-key", "-n", "MouseDown3Pane", "if-shell", "-F", onHeader,
-			Script(selectPane, dragReset) + " ; " + headerMenu,
-			Script(selectPane, []string{"send-keys", "-M"})},
+		{"bind-key", "-n", "MouseDown3Pane", "if-shell", "-F", "#{pane_dead}",
+			Script(selectPane, dragReset) + " ; " + m.deadPanelMenu("M"),
+			Script([]string{"if-shell", "-F", onHeader,
+				Script(selectPane, dragReset) + " ; " + headerMenu,
+				Script(selectPane, []string{"send-keys", "-M"})})},
 		{"bind-key", "-n", "MouseDrag1Pane", "if-shell", "-F", dragging,
 			Script([]string{"if-shell", "-F", dragIs("path"),
 				Script([]string{"display-message", "-d", "1500", i18n.T("tmux.drop_path")}),

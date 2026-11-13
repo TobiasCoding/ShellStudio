@@ -367,3 +367,18 @@ func TestDescribeDialog(t *testing.T) {
 		t.Fatal("described a missing console")
 	}
 }
+
+func TestTagKeyFromEvents(t *testing.T) {
+	for in, want := range map[string]string{
+		"\x1bt": "M-t", "\x1b7": "M-7", "\x1b[24~": "F12", "\x1b[15;2~": "S-F5", "\x1b[15;3~": "M-F5",
+		"\x1b[1;5P": "C-F1", "\x1b\x1b[17~": "M-F6", "a": "", "\r": "", "\x1b[A": "", "\x01": "",
+	} {
+		ev, _, ok := parse([]byte(in), true)
+		if !ok {
+			t.Fatalf("%q not parsed", in)
+		}
+		if got := TagKey(ev); got != want {
+			t.Errorf("TagKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

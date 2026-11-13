@@ -271,7 +271,7 @@ func testExplorerScrollbar(t *testing.T, x *explorerFixture) {
 	}
 	a, view, root := x.view(t, files...)
 	const w, h = 30, 20
-	count := h - len(treeShortcuts()) - 2
+	count := h - 2
 	barX := w - 2
 	// A click at the bottom of the bar shows the end; the release does not
 	// touch the tree and the selection (the root) stays where it was.

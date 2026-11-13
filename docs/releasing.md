@@ -15,7 +15,7 @@ This builds the current working tree (including uncommitted changes) with a
 `VERSION-dev.COMMIT` label and launches it with separate config, database, state
 and tmux sockets under `.work/preview/`. It neither replaces the installed binary
 nor checks for updates. Preview state persists between launches, so you can try
-F2/F3 menus, drag and drop, notes and console reconnects before publishing.
+F1/F3 menus, drag and drop, notes and console reconnects before publishing.
 Commands you run inside preview consoles still run as your user; this is data
 isolation, not a security sandbox. `make clean` removes preview state as well.
 

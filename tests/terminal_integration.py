@@ -196,7 +196,7 @@ class Integration(unittest.TestCase):
         self.assertGreaterEqual(int(tree[0]["w"]), 17, "explorer collapsed to an unreadable sliver")
         # The Minimized panel splits the explorer after it first draws: wait
         # for the redraw at its final height.
-        self.wait_for(lambda: "F2 Menu" in self.tmux("views", "capture-pane", "-p", "-t", tree[0]["id"]))
+        self.wait_for(lambda: "FILES" in self.tmux("views", "capture-pane", "-p", "-t", tree[0]["id"]))
         return tree[0]
 
     def test_current_and_explicit_directory_workspace(self):
@@ -210,7 +210,7 @@ class Integration(unittest.TestCase):
 
     def test_clipboard_uses_mosh_compatible_selector_through_nested_tmux(self):
         terminal = self.terminal(str(self.root))
-        terminal.expect("F2 Menu")
+        terminal.expect("FILES")
         view = json.loads(self.cli("views"))[0]["ID"]
         self.cli("launch", "--view", view, "--name", "clipboard")
         self.wait_for(lambda: bool(self.tmux("programs", "list-clients")))
@@ -243,7 +243,7 @@ class Integration(unittest.TestCase):
         folder = self.root / secret
         folder.mkdir()
         terminal = self.terminal(str(folder))
-        terminal.expect("F2 Menu")
+        terminal.expect("FILES")
         view = json.loads(self.cli("views"))[0]["ID"]
         console = json.loads(self.cli("launch", "--view", view, "--name", secret))
         before = self.tmux("programs", "list-panes", "-a", "-F", "#{pane_pid}")
@@ -278,7 +278,7 @@ class Integration(unittest.TestCase):
                 # Terminal rendering clips long titles. Check the screen using
                 # its short view name, and the full path through persisted data.
                 terminal.expect("This view is empty")
-                terminal.expect("F3 New")
+                terminal.expect("FILES")
                 self.assert_explorer()
                 views = json.loads(self.cli("views"))
                 self.assertEqual(len(views), 1)
@@ -506,12 +506,8 @@ class Integration(unittest.TestCase):
         for name in ("first", "second"):
             t.output = b""
             if name == "first":
-                tree = self.assert_explorer()
-                y = int(tree["h"])-5  # Click F3 in the tree's shortcut area.
-                t.mouse(0, 5, y)
-                t.mouse(0, 5, y, release=True, wait=0.4)
-            else:
-                t.send(b"\x1bOR", 0.4)  # F3
+                self.assert_explorer()
+            t.send(b"\x1bOR", 0.4)  # F3
             t.expect("NEW CONSOLE IN Main")
             t.send(b"\r")
             t.expect("Name of terminal")
@@ -526,7 +522,16 @@ class Integration(unittest.TestCase):
         consoles = json.loads(self.cli("consoles"))
         ids = {c["Name"]: c["ID"] for c in consoles}
         pids = self.tmux("programs", "list-panes", "-a", "-F", "#{pane_pid}")
-        for key, title in ((b"\x1bOQ", "VIEW Main"), (b"\x1b[15~", "ARRANGE Main"),
+        # Dialogs are modal: a click outside the box closes them, and the
+        # release of that click reaches nothing behind.
+        t.output = b""
+        t.send(b"\x1bOR", 0.4)  # F3
+        t.expect("NEW CONSOLE IN Main")
+        t.mouse(0, 0, 3)
+        t.mouse(0, 0, 3, release=True, wait=0.4)
+        self.wait_dialog_closed()
+        self.assertEqual(len(json.loads(self.cli("consoles"))), 2)
+        for key, title in ((b"\x1bOP", "VIEW Main"), (b"\x1b[15~", "ARRANGE Main"),
                            (b"\x1b[18~", "SAVED VIEWS"), (b"\x1b[20~", "KILL CONSOLE")):
             t.output = b""
             t.send(key, 0.4)
@@ -591,10 +596,10 @@ class Integration(unittest.TestCase):
         self.wait_for(lambda: "c-"+ids["terminal-first"] in self.tmux("programs", "list-sessions", "-F", "#{session_name}"))
         self.wait_for(lambda: self.tmux("views", "show-option", "-pqv", "-t", dest["id"], "@ss_disconnected") != "1")
         self.assert_explorer()
-        # Follow a dialog from F2 and return with Escape, then toggle the tree.
+        # Follow a dialog from F1 and return with Escape, then toggle the tree.
         t.pump(0.5)
         t.output = b""
-        t.send(b"\x1bOQ", 0.4)
+        t.send(b"\x1bOP", 0.4)
         t.expect("VIEW Main")
         t.send(b"s", 0.5)
         t.expect("CONSOLES OF Main")
@@ -605,17 +610,17 @@ class Integration(unittest.TestCase):
         self.wait_for(lambda: all(p["kind"] != "explorer" for p in self.panes()))
         self.wait_dialog_closed()
         t.output = b""
-        t.send(b"\x1bOQ", 0.5)
+        t.send(b"\x1bOP", 0.5)
         t.expect("VIEW Main")
         t.send(b"e", 0.5)
         self.wait_for(lambda: any(p["kind"] == "explorer" for p in self.panes()))
         self.wait_dialog_closed()
         self.assert_explorer()
-        # A compact F2 scrolls through stacked categories to the last action.
+        # A compact F1 scrolls through stacked categories to the last action.
         t.resize(70, 24)
         t.pump(0.6)
         t.output = b""
-        t.send(b"\x1bOQ", 0.5)
+        t.send(b"\x1bOP", 0.5)
         for _ in range(24):
             t.send(b"\x1b[B", 0.03)
         t.expect("Back (Esc)")

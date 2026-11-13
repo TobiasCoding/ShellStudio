@@ -122,6 +122,8 @@ type Event struct {
 	// Shift is set for keys reported with the Shift modifier (CSI 1;2A).
 	// Key stays the plain name, so lists keep moving with Shift held.
 	Shift bool
+	// Alt and Ctrl are the other modifiers of CSI keys (F5 with CSI 15;3~).
+	Alt, Ctrl bool
 	// At is when the event's bytes arrived: double clicks are measured by
 	// arrival, not by when a busy program got to them.
 	At time.Time
@@ -158,7 +160,19 @@ type Screen struct {
 	pending []Event
 	paste   bool
 	arrived time.Time
+	// leftDown is set between a left press and its release. A release
+	// without a press here belongs to a click that began before this
+	// screen opened (the menu entry that opened a dialog) and is dropped.
+	leftDown bool
+	// modal is set in dialogs opened as modals (see ModalEnv).
+	modal *modal
+	// outside is set when a click outside the modal closed it.
+	outside bool
 }
+
+// ClosedOutside reports whether a click outside the dialog's box was read
+// (as Escape): the user left the dialog, not just this step.
+func (s *Screen) ClosedOutside() bool { return s.outside }
 
 // Open takes over the terminal of this pane or popup.
 func Open(paste bool) (*Screen, error) {
@@ -167,7 +181,8 @@ func Open(paste bool) (*Screen, error) {
 	if e != nil {
 		return nil, e
 	}
-	s := &Screen{in: in, out: out, restore: st, bytes: make(chan []byte, 64), winch: make(chan os.Signal, 4), paste: paste}
+	s := &Screen{in: in, out: out, restore: st, bytes: make(chan []byte, 64), winch: make(chan os.Signal, 4), paste: paste,
+		modal: modalFromEnv()}
 	signal.Notify(s.winch, syscall.SIGWINCH)
 	s.size()
 	init := "\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1000h\x1b[?1006h"
@@ -205,6 +220,9 @@ func (s *Screen) size() {
 	w, h, e := term.GetSize(s.out.Fd())
 	if e != nil || w <= 0 || h <= 0 {
 		w, h = 80, 24
+	}
+	if s.modal != nil {
+		w, h = s.modal.layout(w, h, true)
 	}
 	s.W, s.H = w, h
 }
@@ -316,7 +334,11 @@ func (s *Screen) Refresh() {
 	var b strings.Builder
 	b.WriteString("\x1b[H")
 	cur := Style{Fg: 1, Bg: 1, Attr: 0xff}
-	for y, row := range s.frame {
+	frame := s.frame
+	if s.modal != nil {
+		frame = s.modal.compose(s.frame, s.W, s.H)
+	}
+	for y, row := range frame {
 		b.WriteString("\x1b[" + strconv.Itoa(y+1) + ";1H")
 		for _, c := range row {
 			if c.r == 0 {
@@ -359,7 +381,13 @@ func (s *Screen) Read(timeout time.Duration) Event {
 		if ev, rest, ok := parse(s.buf, false); ok {
 			s.buf = rest
 			ev.At = s.arrived
-			return ev
+			if s.strayRelease(ev) {
+				continue
+			}
+			if ev, ok := s.translate(ev); ok {
+				return ev
+			}
+			continue
 		}
 		var escape <-chan time.Time
 		var esc *time.Timer
@@ -387,7 +415,13 @@ func (s *Screen) Read(timeout time.Duration) Event {
 			if ev, rest, ok := parse(s.buf, true); ok {
 				s.buf = rest
 				ev.At = s.arrived
-				return ev
+				if s.strayRelease(ev) {
+					continue
+				}
+				if ev, ok := s.translate(ev); ok {
+					return ev
+				}
+				continue
 			}
 		case <-s.winch:
 			stop()
@@ -398,6 +432,45 @@ func (s *Screen) Read(timeout time.Duration) Event {
 			return Event{Kind: TimeoutEvent}
 		}
 	}
+}
+
+// translate moves a modal's mouse events to the dialog's coordinates. A
+// press outside the box is Escape; other events outside it are dropped.
+func (s *Screen) translate(ev Event) (Event, bool) {
+	if s.modal == nil || ev.Kind != MouseEvent {
+		return ev, true
+	}
+	if !s.modal.inside(ev.X, ev.Y, s.W, s.H) {
+		if ev.Press && !ev.Motion && ev.Button < 64 {
+			s.outside = true
+			return Event{Kind: KeyEvent, Key: "esc", At: ev.At}, true
+		}
+		return ev, false
+	}
+	ev.X -= s.modal.ox
+	ev.Y -= s.modal.oy
+	return ev, true
+}
+
+// strayRelease tracks the left button and reports a release whose press
+// this screen never saw.
+func (s *Screen) strayRelease(ev Event) bool {
+	// Panes (explorer, Minimized) receive every press; only dialogs open
+	// in the middle of a click.
+	if s.modal == nil {
+		return false
+	}
+	press, release := ev.Left()
+	switch {
+	case press:
+		s.leftDown = true
+	case release:
+		if !s.leftDown {
+			return true
+		}
+		s.leftDown = false
+	}
+	return false
 }
 
 var csiKeys = map[string]string{
@@ -501,11 +574,11 @@ func parse(b []byte, flush bool) (Event, []byte, bool) {
 		if final == 'I' || final == 'O' {
 			return parse(rest, flush) // Focus reports: nothing to do.
 		}
-		name, shift := params, false
+		name, mods := params, 0
 		if j := strings.Index(name, ";"); j >= 0 {
 			// xterm modifiers are 1 plus a bit mask: 1 Shift, 2 Alt, 4 Ctrl.
 			if m, e := strconv.Atoi(name[j+1:]); e == nil && m > 1 {
-				shift = (m-1)&1 != 0
+				mods = m - 1
 			}
 			name = name[:j]
 		}
@@ -513,7 +586,7 @@ func parse(b []byte, flush bool) (Event, []byte, bool) {
 			name = ""
 		}
 		if k, ok := csiKeys[name+string(final)]; ok {
-			return Event{Kind: KeyEvent, Key: k, Shift: shift}, rest, true
+			return Event{Kind: KeyEvent, Key: k, Shift: mods&1 != 0, Alt: mods&2 != 0, Ctrl: mods&4 != 0}, rest, true
 		}
 		return Event{Kind: KeyEvent, Key: "unknown"}, rest, true
 	case 'O':
@@ -528,6 +601,16 @@ func parse(b []byte, flush bool) (Event, []byte, bool) {
 		}
 		return Event{Kind: KeyEvent, Key: "unknown"}, b[3:], true
 	case 0x1b:
+		// ESC before a function key is Alt in terminals without modifier
+		// parameters; a lone double Escape stays Escape.
+		if len(b) > 2 && (b[2] == '[' || b[2] == 'O') {
+			if ev, rest, ok := parse(b[1:], flush); ok && ev.Kind == KeyEvent && ev.Key != "unknown" && ev.Key != "esc" {
+				ev.Alt = true
+				return ev, rest, true
+			} else if !ok {
+				return Event{}, b, false
+			}
+		}
 		return key("esc", 1)
 	}
 	r, n := utf8.DecodeRune(b[1:])

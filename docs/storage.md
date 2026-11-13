@@ -17,10 +17,11 @@ its WAL may contain the latest commits. Create a verified backup with:
 
     shellstudio backup /absolute/private/path/backup.db
 
-Schema 4 (tags, descriptions, minimized consoles and panel sizes) is applied
-in one transaction on first open; a backup made before it opens with this
-version and is migrated the same way. Older releases reject a schema 4
-database instead of altering it.
+Schema 4 (tags, descriptions, minimized consoles and panel sizes) and schema 5
+(a shortcut per tag and the conversation of each agent console) are applied in
+one transaction on first open; a backup made before them opens with this
+version and is migrated the same way. Older releases reject a newer schema
+instead of altering it.
 
 The preferences of the Minimized panel (visible columns, sort and tag filter)
 and the language live in config.json as minimized_columns, minimized_sort,

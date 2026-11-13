@@ -34,7 +34,8 @@ func RunView(a *app.App, action, client, pane string, back bool) error {
 	if err != nil {
 		return nil
 	}
-	if result == "" && back && client != "" {
+	// A click outside the dialog closes the whole chain: Escape goes back.
+	if result == "" && back && client != "" && !s.ClosedOutside() {
 		return a.Chain(client, "menu", pane, false)
 	}
 	if result == "" {
@@ -118,7 +119,7 @@ func runView(s *Screen, a *app.App, action, client, pane string) (string, error)
 		return "", LanguageDialog(s, a)
 	}
 	if isMenuAction(action) {
-		// Opened from a top bar menu: the same step as in the F2 menu.
+		// Opened from a top bar menu: the same step as in the F1 menu.
 		f, e := focus()
 		if e != nil {
 			return "", e
@@ -192,7 +193,7 @@ func moveInGrid(actions []app.Cell, selected, key string) string {
 	return best
 }
 
-// ViewMenu is F2: everything about the view, by category in columns; a
+// ViewMenu is F1: everything about the view, by category in columns; a
 // click, its key, or the arrows and Enter choose an option.
 func ViewMenu(s *Screen, a *app.App, view, focused, client, pane string) string {
 	message, selected, pressed := "", "consoles", ""
@@ -749,7 +750,7 @@ func EditView(s *Screen, a *app.App, view, focused string) string {
 			if err = a.RemoveFromView(view, members[selected].ID); err == nil {
 				message = i18n.T("ui.dialog.removed")
 			}
-		case (key == "n" || key == "N") && has:
+		case (key == "f2" || key == "n" || key == "N") && has:
 			if name, ok := Prompt(s, i18n.T("ui.dialog.full_name"), members[selected].Name, members[selected].Name, 80, ""); ok && name != "" {
 				err = a.Rename(members[selected].ID, name)
 			}
@@ -1045,8 +1046,13 @@ func Disconnected(a *app.App) error {
 		f, err := a.PaneOwner(pane)
 		programs, _ := a.Mux.Programs()
 		_, running := programs[f.Console]
-		_, gone := a.Store.Console(f.Console)
+		c, gone := a.Store.Console(f.Console)
 		exists := gone == nil
+		// An agent console stopped by a reboot resumes its conversation.
+		resumable := false
+		if exists && !running {
+			resumable = a.Resumable(c)
+		}
 		if err != nil && message == "" {
 			message = err.Error()
 		}
@@ -1058,12 +1064,17 @@ func Disconnected(a *app.App) error {
 		} else if exists {
 			s.Draw(2, i18n.T("ui.disc.stopped", f.Name), Bold)
 			s.Draw(3, i18n.T("ui.disc.stopped_d"), Normal)
+			if resumable {
+				s.Draw(4, i18n.T("ui.disc.resumable"), Normal)
+			}
 		} else {
 			s.Draw(2, i18n.T("ui.disc.gone", f.Name), Bold)
 		}
 		var options []string
 		if running {
 			options = append(options, i18n.T("ui.disc.reconnect"))
+		} else if resumable {
+			options = append(options, i18n.T("ui.disc.resume"), i18n.T("ui.disc.fresh"))
 		} else if exists {
 			options = append(options, i18n.T("ui.disc.start"))
 		}
@@ -1072,16 +1083,20 @@ func Disconnected(a *app.App) error {
 			options = append(options, i18n.T("ui.disc.kill"))
 		}
 		options = append(options, "", i18n.T("ui.disc.new"), i18n.T("ui.disc.menu"))
-		for i, l := range options {
-			s.Draw(5+i, l, Normal)
+		top := 5
+		if resumable {
+			top = 6
 		}
-		s.Draw(len(options)+6, message, Normal)
+		for i, l := range options {
+			s.Draw(top+i, l, Normal)
+		}
+		s.Draw(top+len(options)+1, message, Normal)
 		s.Refresh()
 		ev := s.Read(2 * time.Second)
 		key := ev.Key
 		if ev.Kind == MouseEvent {
-			if _, up := ev.Left(); up && ev.Y >= 5 && ev.Y < 5+len(options) {
-				key = HintKey(options[ev.Y-5])
+			if _, up := ev.Left(); up && ev.Y >= top && ev.Y < top+len(options) {
+				key = HintKey(options[ev.Y-top])
 			} else {
 				continue
 			}
@@ -1098,6 +1113,12 @@ func Disconnected(a *app.App) error {
 			message = i18n.T("ui.disc.connecting")
 		case key == "enter" && exists:
 			if e := a.Detached("restart", f.Console); e != nil {
+				message = e.Error()
+			} else {
+				message = i18n.T("ui.disc.starting")
+			}
+		case (key == "n" || key == "N") && resumable:
+			if e := a.Detached("restart", "--new-conversation", f.Console); e != nil {
 				message = e.Error()
 			} else {
 				message = i18n.T("ui.disc.starting")

@@ -35,9 +35,8 @@ func (a *App) ShowError(client, title, detail string) error {
 	}
 	// Popups wait for user input; the five-second command timeout is for
 	// background tmux operations, not for reading a message.
-	c := exec.Command(a.Mux.Tmux, "-u", "-S", a.Mux.Socket(true), "display-popup", "-c", client,
-		"-E", "-x", "C", "-y", "C", "-w", "80%", "-h", "60%", a.Mux.Self("_message", f.Name()))
-	return c.Run()
+	argv := a.Mux.ModalPopup(client, "80%", "60%", a.Mux.Self("_message", f.Name()))
+	return exec.Command(argv[0], argv[1:]...).Run()
 }
 
 func token(s string) string {

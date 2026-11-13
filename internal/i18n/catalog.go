@@ -68,8 +68,19 @@ var catalog = map[string]entry{
 
 	// Tags dialog.
 	"tags.title":              {"ETIQUETAS", "TAGS"},
-	"tags.help":               {"N nueva | R renombrar | C color | [ ] mover | Supr borrar | Esc cerrar", "N new | R rename | C color | [ ] move | Del delete | Esc close"},
+	"tags.help":               {"N nueva | F2 renombrar | C color | S atajo | [ ] mover | Supr borrar | Esc cerrar", "N new | F2 rename | C color | S shortcut | [ ] move | Del delete | Esc close"},
 	"tags.new":                {"Nueva etiqueta", "New tag"},
+	"tags.key_title":          {"ATAJO DE %s", "SHORTCUT OF %s"},
+	"tags.key_detail":         {"Pulsa la combinación que pone esta etiqueta a la consola enfocada (y se la quita si ya la tiene): Alt+letra o número, o F1–F12 con Ctrl, Alt o Shift.", "Press the keys that give the focused console this tag (and remove it when it already has it): Alt+letter or digit, or F1–F12 with Ctrl, Alt or Shift."},
+	"tags.key_current":        {"Atajo actual: %s", "Current shortcut: %s"},
+	"tags.key_none":           {"ninguno", "none"},
+	"tags.key_keys":           {"Retroceso/Supr quitar el atajo · Esc cancelar", "Backspace/Del remove the shortcut · Esc cancel"},
+	"tags.key_invalid":        {"Usa Alt+letra o número, o F1–F12 con Ctrl, Alt o Shift.", "Use Alt+letter or digit, or F1–F12 with Ctrl, Alt or Shift."},
+	"tags.key_reserved":       {"%s ya es un atajo de ShellStudio.", "%s is already a ShellStudio shortcut."},
+	"tags.key_taken":          {"%s ya es el atajo de %s.", "%s is already the shortcut of %s."},
+	"tags.key_set":            {"%s pone la etiqueta %s.", "%s now applies the tag %s."},
+	"tags.key_removed":        {"%s ya no tiene atajo.", "%s no longer has a shortcut."},
+	"tags.key_no_console":     {"Enfoca una consola para etiquetarla.", "Focus a console to tag it."},
 	"tags.rename":             {"Renombrar etiqueta", "Rename tag"},
 	"tags.color":              {"Color de la etiqueta", "Tag color"},
 	"tags.name_detail":        {"Nombre de la etiqueta (1–24 caracteres).", "Tag name (1–24 characters)."},
@@ -85,7 +96,8 @@ var catalog = map[string]entry{
 	"tags.small":              {"Agranda la terminal. Esc: salir", "Enlarge the terminal. Esc: leave"},
 	// Shortcut hints: each one is clickable and does what its key does.
 	"tags.hint_new":    {"N nueva", "N new"},
-	"tags.hint_rename": {"R renombrar", "R rename"},
+	"tags.hint_rename": {"F2 renombrar", "F2 rename"},
+	"tags.hint_key":    {"S atajo", "S shortcut"},
 	"tags.hint_color":  {"C color", "C color"},
 	"tags.hint_up":     {"[ subir", "[ up"},
 	"tags.hint_down":   {"] bajar", "] down"},
@@ -122,14 +134,14 @@ var catalog = map[string]entry{
 	"tmux.dead.finished":   {"Terminada", "Finished"},
 	"tmux.dead.signal":     {"señal", "signal"},
 	"tmux.dead.exit":       {"salida", "exit"},
-	"tmux.dead.options":    {"Enter o clic: reiniciar · renombrar · cerrar panel · matar consola", "Enter or click: restart · rename · close panel · kill console"},
+	"tmux.dead.options":    {"Enter o clic derecho: reiniciar · renombrar · cerrar panel · matar consola", "Enter or right click: restart · rename · close panel · kill console"},
 	"tmux.dead.title":      {"terminada", "finished"},
 	"tmux.restart":         {"Reiniciar", "Restart"},
-	"tmux.rename":          {"Renombrar", "Rename"},
+	"tmux.rename":          {"Renombrar (F2)", "Rename (F2)"},
 	"tmux.close_listed":    {"Cerrar panel (la consola sigue en la lista)", "Close panel (the console stays in the list)"},
 	"tmux.kill":            {"Matar consola", "Kill console"},
 	"tmux.panel_ended":     {"Este panel terminó", "This panel ended"},
-	"tmux.panel_options":   {"Clic: rehacer · cerrar panel", "Click: redo · close panel"},
+	"tmux.panel_options":   {"Enter o clic derecho: rehacer · cerrar panel", "Enter or right click: redo · close panel"},
 	"tmux.move_before":     {"Mover antes (Alt+<)", "Move before (Alt+<)"},
 	"tmux.move_after":      {"Mover después (Alt+>)", "Move after (Alt+>)"},
 	"tmux.new_console":     {"Nueva consola (F3)", "New console (F3)"},
@@ -137,10 +149,10 @@ var catalog = map[string]entry{
 	"tmux.ports":           {"Reenviar puertos a tu PC", "Forward ports to your PC"},
 	"tmux.close_running":   {"Cerrar panel (la consola sigue en ejecución)", "Close panel (the console keeps running)"},
 	"tmux.kill_f9":         {"Matar consola (F9)", "Kill console (F9)"},
-	"tmux.view_menu":       {"Menú de la vista (F2)", "View menu (F2)"},
+	"tmux.view_menu":       {"Menú de la vista (F1)", "View menu (F1)"},
 	"tmux.search":          {"Buscar (/)", "Search (/)"},
 	"tmux.edit_nano":       {"Editar la selección con nano (E)", "Edit the selection with nano (E)"},
-	"tmux.rename_sel":      {"Renombrar la selección (N)", "Rename the selection (N)"},
+	"tmux.rename_sel":      {"Renombrar la selección (F2)", "Rename the selection (F2)"},
 	"tmux.reload":          {"Recargar carpetas (R)", "Reload folders (R)"},
 	"tmux.hide_explorer":   {"Ocultar explorador", "Hide explorer"},
 	"tmux.redo_panel":      {"Rehacer el panel", "Redo the panel"},
@@ -160,7 +172,7 @@ var catalog = map[string]entry{
 	"status.word.stopped":  {"detenida", "stopped"},
 	"status.word.finished": {"terminada", "finished"},
 
-	// View menu (F2) and the dialogs it opens.
+	// View menu (F1) and the dialogs it opens.
 	"ui.menu.consoles":       {"CONSOLAS", "CONSOLES"},
 	"ui.menu.layout":         {"DISTRIBUCIÓN", "LAYOUT"},
 	"ui.menu.views":          {"VISTAS", "VIEWS"},
@@ -266,7 +278,7 @@ var catalog = map[string]entry{
 	"ui.help.create_kind":  {"%s  Crear %s", "%s  Create %s"},
 	"ui.help.add_existing": {"A  Agregar consola existente", "A  Add existing console"},
 	"ui.help.remove":       {"-  Quitar de esta vista", "-  Remove from this view"},
-	"ui.help.rename":       {"N  Renombrar", "N  Rename"},
+	"ui.help.rename":       {"F2  Renombrar", "F2  Rename"},
 	"ui.help.replace":      {"R  Matar y reemplazar aquí", "R  Kill and replace here"},
 	"ui.help.kill":         {"M/Del  Matar consola", "M/Del  Kill console"},
 	"ui.help.go_to":        {"Enter  Ir a la consola seleccionada", "Enter  Go to the selected console"},
@@ -315,17 +327,20 @@ var catalog = map[string]entry{
 	"ui.disc.gone":         {"%s: la consola ya no existe.", "%s: the console no longer exists."},
 	"ui.disc.reconnect":    {"Enter  Reconectar", "Enter  Reconnect"},
 	"ui.disc.start":        {"Enter  Iniciarla de nuevo", "Enter  Start it again"},
+	"ui.disc.resumable":    {"Su conversación se puede reanudar.", "Its conversation can be resumed."},
+	"ui.disc.resume":       {"Enter  Reanudar la conversación", "Enter  Resume the conversation"},
+	"ui.disc.fresh":        {"N      Empezar una conversación nueva", "N      Start a new conversation"},
 	"ui.disc.close":        {"Q      Cerrar panel", "Q      Close panel"},
 	"ui.disc.kill":         {"M      Matar consola", "M      Kill console"},
 	"ui.disc.new":          {"F3     Nueva consola", "F3     New console"},
-	"ui.disc.menu":         {"F2     Menú de la vista", "F2     View menu"},
+	"ui.disc.menu":         {"F1     Menú de la vista", "F1     View menu"},
 	"ui.disc.connecting":   {"Conectando…", "Connecting…"},
 	"ui.disc.starting":     {"Iniciando…", "Starting…"},
 	"ui.disc.closing":      {"Cerrando…", "Closing…"},
 	"ui.empty.name":        {"Vista vacía", "Empty view"},
 	"ui.empty.title":       {"Esta vista está vacía", "This view is empty"},
 	"ui.empty.create":      {"F3  Crear una consola aquí", "F3  Create a console here"},
-	"ui.empty.menu":        {"F2  Menú de esta vista", "F2  Menu of this view"},
+	"ui.empty.menu":        {"F1  Menú de esta vista", "F1  Menu of this view"},
 	"ui.empty.switch":      {"Ctrl+Shift+←/→  Cambiar de vista", "Ctrl+Shift+←/→  Change view"},
 	"ui.empty.leave":       {"F10  Salir; las consolas siguen en ejecución", "F10  Leave; consoles keep running"},
 
@@ -334,16 +349,9 @@ var catalog = map[string]entry{
 	"ui.tree.binary":      {"Archivo binario.", "Binary file."},
 	"ui.tree.limited":     {"[Vista previa limitada a 128 KiB]", "[Preview limited to 128 KiB]"},
 	"ui.tree.preview":     {"Esc: árbol | ↑↓ leer", "Esc: tree | ↑↓ read"},
-	"ui.tree.menu":        {"F2 Menú", "F2 Menu"},
-	"ui.tree.new":         {"F3 Nueva", "F3 New"},
-	"ui.tree.arrange":     {"F5 Distribuir", "F5 Arrange"},
-	"ui.tree.kill":        {"F9 Matar", "F9 Kill"},
-	"ui.tree.views":       {"F7 Vistas", "F7 Views"},
-	"ui.tree.leave":       {"F10 Salir", "F10 Leave"},
 	"ui.tree.indexing":    {"Indexando…", "Indexing…"},
 	"ui.tree.folder":      {"Es una carpeta.", "It is a folder."},
 	"ui.tree.in_nano":     {"En nano; al salir se cierra la consola.", "In nano; leaving it closes the console."},
-	"ui.tree.no_client":   {"no se pudo identificar el cliente de la vista", "the view client could not be identified"},
 	"ui.tree.error":       {"Error", "Error"},
 	"ui.tree.errors":      {"ERRORES DE LA APP", "APP ERRORS"},
 	"ui.tree.err_close":   {"[X] Cerrar", "[X] Close"},
@@ -489,6 +497,7 @@ var catalog = map[string]entry{
 	"ctx.Change view":             {"Cambiar de vista", "Change view"},
 	"ctx.Close editor":            {"Cerrar el editor", "Close editor"},
 	"ctx.Consoles of the view":    {"Consolas de la vista", "Consoles of the view"},
+	"ctx.Tag":                     {"Etiqueta", "Tag"},
 	"ctx.Description":             {"Descripción", "Description"},
 	"ctx.Dialog":                  {"Diálogo", "Dialog"},
 	"ctx.Drop path":               {"Soltar ruta", "Drop path"},
@@ -544,16 +553,18 @@ Uso:
   shellstudio new-view [--folder PATH] NAME
   shellstudio views | consoles
   shellstudio launch --view ID [--extension ID] [--profile NAME] [--folder PATH] [--name NAME]
-  shellstudio restart CONSOLE_ID       Reinicia explícitamente un programa detenido
+  shellstudio restart [--new-conversation] CONSOLE_ID
+                                       Reinicia un programa detenido; Claude y Codex
+                                       reanudan su conversación salvo con --new-conversation
   shellstudio stop CONSOLE_ID          Termina un programa y conserva la consola
   shellstudio kill CONSOLE_ID          Termina un programa y borra la consola
   shellstudio version
 
 Dentro de una vista:
-  F2 menú de la vista · F3 nueva consola · F5 distribuir · F7 vistas · F9 matar consola
+  F1 menú de la vista · F2 renombrar · F3 nueva consola · F5 distribuir · F7 vistas · F9 matar consola
   F10 salir (los programas siguen en ejecución) · F4 zoom · F6 / Ctrl+Alt+flechas cambiar de panel
-  Ctrl+Shift+←/→ o F8 cambiar de vista · Alt+1–5 distribuciones · Alt+< / > mover consola
-  F2 → W elige los permisos con que empiezan las nuevas consolas de Claude y Codex.
+  Shift+F10 menú del panel · Ctrl+RePág/AvPág, Ctrl+Shift+←/→ o F8 cambiar de vista
+  Alt+1–5 distribuciones · Alt+< / > mover consola · F1 → W elige los permisos con que empiezan las nuevas consolas de Claude y Codex.
   Haz clic en el encabezado de una consola para ver su menú; arrástralo sobre otra consola para intercambiarlas.
   Arrastra un archivo del explorador sobre una consola para escribir su ruta.
 
@@ -582,16 +593,18 @@ Usage:
   shellstudio new-view [--folder PATH] NAME
   shellstudio views | consoles
   shellstudio launch --view ID [--extension ID] [--profile NAME] [--folder PATH] [--name NAME]
-  shellstudio restart CONSOLE_ID       Explicitly restart a stopped program
+  shellstudio restart [--new-conversation] CONSOLE_ID
+                                       Restart a stopped program; Claude and Codex
+                                       resume their conversation unless --new-conversation
   shellstudio stop CONSOLE_ID          End a program, keeping the console
   shellstudio kill CONSOLE_ID          End a program and remove the console
   shellstudio version
 
 Inside a view:
-  F2 view menu · F3 new console · F5 arrange · F7 views · F9 kill console
+  F1 view menu · F2 rename · F3 new console · F5 arrange · F7 views · F9 kill console
   F10 leave (programs keep running) · F4 zoom · F6 / Ctrl+Alt+arrows change panel
-  Ctrl+Shift+←/→ or F8 change view · Alt+1–5 layouts · Alt+< / > move console
-  F2 → W chooses the permissions new Claude and Codex consoles start with.
+  Shift+F10 panel menu · Ctrl+PgUp/PgDn, Ctrl+Shift+←/→ or F8 change view
+  Alt+1–5 layouts · Alt+< / > move console · F1 → W chooses the permissions new Claude and Codex consoles start with.
   Click a console header for its menu; drag it onto another console to swap them.
   Drag a file from the explorer onto a console to type its path.
 

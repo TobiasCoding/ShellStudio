@@ -157,6 +157,8 @@ func run(args []string) error {
 		return e
 	}
 	defer a.Close()
+	// Dialogs opened as modals draw the workspace behind their box.
+	tui.Backdrop = a.Backdrop
 	if workspace || menu {
 		var v store.View
 		if menu {
@@ -237,6 +239,14 @@ func run(args []string) error {
 		a.RefreshOpen(*v["view"])
 		return printJSON(c)
 	case "restart", "stop", "kill":
+		// restart --new-conversation starts an agent console without
+		// resuming its conversation.
+		if args[0] == "restart" && len(args) == 3 && args[1] == "--new-conversation" {
+			if e := a.Store.ClearConversation(args[2]); e != nil {
+				return e
+			}
+			return a.Restart(args[2])
+		}
 		if len(args) != 2 {
 			return errors.New(i18n.T("cli.usage", "shellstudio "+args[0]+" CONSOLE_ID"))
 		}
@@ -280,6 +290,13 @@ func run(args []string) error {
 		m := ui.New(a, "viewer")
 		m.SetViewer(kind, p)
 		return bubbleTea(a, m)
+	case "_track":
+		// The conversation tracker of agent consoles; --spawn starts it
+		// detached and returns (see App.EnsureTracker).
+		if len(args) == 2 && args[1] == "--spawn" {
+			return a.SpawnTracker()
+		}
+		return a.Track()
 	case "_exec":
 		if len(args) != 2 {
 			return errors.New("invalid console invocation")
@@ -298,13 +315,19 @@ func run(args []string) error {
 		if e = os.Chdir(c.Folder); e != nil {
 			return e
 		}
+		// An agent console resumes the conversation it was in (after a
+		// reboot, for example), and the tracker follows the new one.
+		argv := a.ExecArgv(c)
+		if app.AgentOf(c) != "" {
+			a.EnsureTracker()
+		}
 		a.Close()
 		diagnostics.Record(diagnostics.Entry{Event: "console-exec", Reference: c.ID}, nil, time.Time{})
 		env := map[string]string{"SHELLSTUDIO_CONSOLE": c.ID}
 		for k, v := range c.Env {
 			env[k] = v
 		}
-		return syscall.Exec(p, c.Argv, runner.Env(env))
+		return syscall.Exec(p, argv, runner.Env(env))
 	}
 	// Internal commands run from tmux bindings, popups and view panes.
 	return internal(a, args)
@@ -408,12 +431,21 @@ func internal(a *app.App, args []string) error {
 		case "tab":
 			return report("Change view", a.SwitchToTab(client, *v["target"]))
 		case "tagchoose":
-			// Popup fallback of the native tag menu.
+			// The tag chooser of a console: the target (Minimized panel) or
+			// the focused one.
+			console := *v["target"]
+			if console == "" {
+				f, e := a.Focus(client, pane, false)
+				if e != nil || f.Console == "" {
+					return report("Tag", e)
+				}
+				console = f.Console
+			}
 			s, e := tui.Open(false)
 			if e != nil {
 				return e
 			}
-			if err := tui.ChooseTag(s, a, *v["target"]); err != nil {
+			if err := tui.ChooseTag(s, a, console); err != nil {
 				tui.Message(s, "ACTION COULD NOT BE COMPLETED", err.Error())
 			}
 			s.Close()
@@ -570,6 +602,14 @@ func paneAction(a *app.App, action, pane, client, session, tty, target string) e
 		return a.Maximize(pane)
 	case action == "tagmenu" && f.Console != "":
 		return a.TagMenu(client, pane, f.Console)
+	case action == "tagkey" && target != "":
+		if f.Console == "" {
+			if client != "" {
+				a.Mux.Run(true, "display-message", "-c", client, "-d", "2000", i18n.T("tags.key_no_console"))
+			}
+			return nil
+		}
+		return a.ToggleTag(f.Console, target)
 	case action == "tag" && f.Console != "":
 		tag := target
 		if tag == "none" {

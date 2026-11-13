@@ -151,6 +151,16 @@ ALTER TABLE views ADD COLUMN minimized_panel INTEGER NOT NULL DEFAULT 1;`); e !=
 			return e
 		}
 	}
+	// Schema 5: a keyboard shortcut per tag (a tmux key name, '' for none)
+	// and the agent conversation each console was last seen in, so a console
+	// started again after a reboot resumes it.
+	if v < 5 {
+		if _, e = tx.Exec(`ALTER TABLE tags ADD COLUMN shortcut TEXT NOT NULL DEFAULT '';
+CREATE TABLE conversations (console_id TEXT PRIMARY KEY REFERENCES consoles(id) ON DELETE CASCADE,agent TEXT NOT NULL,conversation TEXT NOT NULL,updated TEXT NOT NULL);
+PRAGMA user_version=5;`); e != nil {
+			return e
+		}
+	}
 	return tx.Commit()
 }
 func (s *Store) Check() error {
@@ -192,7 +202,7 @@ func (s *Store) Event(kind, detail string) error {
 }
 
 // SchemaVersion is the newest metadata schema this build reads and writes.
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 // SeedTags are created once by the schema 4 migration. They are ordinary,
 // editable rows; Color is an index of the 256-color palette.
@@ -232,6 +242,16 @@ type Tag struct {
 	ID, Name string
 	Color    int
 	Position int
+	// Shortcut is the tmux key that tags the focused console ("M-t", "F12");
+	// empty when the tag has none.
+	Shortcut string
+}
+
+// Conversation is the agent conversation a console was last seen in: the
+// agent (claude or codex) and its session ID.
+type Conversation struct {
+	Agent, ID string
+	Updated   time.Time
 }
 
 const viewColumns = "id,name,folder,layout,explorer,tree,explorer_width,minimized_height,minimized_panel"
@@ -394,7 +414,7 @@ func (s *Store) SetConsoleTag(id, tag string) error {
 
 // Tags lists the tags in their order.
 func (s *Store) Tags() ([]Tag, error) {
-	r, e := s.DB.Query("SELECT id,name,color,position FROM tags ORDER BY position, name")
+	r, e := s.DB.Query("SELECT id,name,color,position,shortcut FROM tags ORDER BY position, name")
 	if e != nil {
 		return nil, e
 	}
@@ -402,7 +422,7 @@ func (s *Store) Tags() ([]Tag, error) {
 	var out []Tag
 	for r.Next() {
 		var t Tag
-		if e = r.Scan(&t.ID, &t.Name, &t.Color, &t.Position); e != nil {
+		if e = r.Scan(&t.ID, &t.Name, &t.Color, &t.Position, &t.Shortcut); e != nil {
 			return nil, e
 		}
 		out = append(out, t)
@@ -413,7 +433,7 @@ func (s *Store) Tags() ([]Tag, error) {
 // Tag returns one tag.
 func (s *Store) Tag(id string) (Tag, error) {
 	var t Tag
-	e := s.DB.QueryRow("SELECT id,name,color,position FROM tags WHERE id=?", id).Scan(&t.ID, &t.Name, &t.Color, &t.Position)
+	e := s.DB.QueryRow("SELECT id,name,color,position,shortcut FROM tags WHERE id=?", id).Scan(&t.ID, &t.Name, &t.Color, &t.Position, &t.Shortcut)
 	return t, e
 }
 
@@ -434,6 +454,47 @@ func (s *Store) UpdateTag(t Tag) error {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// SetTagShortcut stores the key of a tag; an empty key removes it.
+func (s *Store) SetTagShortcut(id, key string) error {
+	r, e := s.DB.Exec("UPDATE tags SET shortcut=? WHERE id=?", key, id)
+	if e != nil {
+		return e
+	}
+	if n, _ := r.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// Conversation returns the conversation recorded for a console;
+// sql.ErrNoRows when there is none.
+func (s *Store) Conversation(console string) (Conversation, error) {
+	var c Conversation
+	var updated string
+	e := s.DB.QueryRow("SELECT agent,conversation,updated FROM conversations WHERE console_id=?", console).Scan(&c.Agent, &c.ID, &updated)
+	c.Updated, _ = time.Parse(time.RFC3339Nano, updated)
+	return c, e
+}
+
+// SetConversation records the conversation of a console, replacing the
+// previous one. It writes only when something changed.
+func (s *Store) SetConversation(console string, c Conversation) error {
+	if old, e := s.Conversation(console); e == nil && old.Agent == c.Agent && old.ID == c.ID {
+		return nil
+	}
+	_, e := s.DB.Exec(`INSERT INTO conversations(console_id,agent,conversation,updated) VALUES(?,?,?,?)
+ON CONFLICT(console_id) DO UPDATE SET agent=excluded.agent,conversation=excluded.conversation,updated=excluded.updated`,
+		console, c.Agent, c.ID, time.Now().UTC().Format(time.RFC3339Nano))
+	return e
+}
+
+// ClearConversation forgets the conversation of a console: the next start
+// begins a new one.
+func (s *Store) ClearConversation(console string) error {
+	_, e := s.DB.Exec("DELETE FROM conversations WHERE console_id=?", console)
+	return e
 }
 
 // DeleteTag removes a tag; consoles that used it are left untagged.

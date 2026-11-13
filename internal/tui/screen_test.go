@@ -42,7 +42,8 @@ func TestShiftArrowsAreReported(t *testing.T) {
 	for in, want := range map[string]Event{
 		"\x1b[1;2A": {Kind: KeyEvent, Key: "up", Shift: true},
 		"\x1b[1;2B": {Kind: KeyEvent, Key: "down", Shift: true},
-		"\x1b[1;5A": {Kind: KeyEvent, Key: "up"},
+		"\x1b[1;5A": {Kind: KeyEvent, Key: "up", Ctrl: true},
+		"\x1b[1;3B": {Kind: KeyEvent, Key: "down", Alt: true},
 		"\x1b[A":    {Kind: KeyEvent, Key: "up"},
 	} {
 		if e, _, ok := parse([]byte(in), false); !ok || e != want {
