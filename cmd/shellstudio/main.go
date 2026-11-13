@@ -562,6 +562,8 @@ func paneAction(a *app.App, action, pane, client, session, tty, target string) e
 			a.NotifyMinimized()
 		}
 		return e
+	case action == "zoomed" && pane != "":
+		return a.SyncZoom(pane)
 	case action == "panel-sizes" && pane != "":
 		return a.SavePanelSizes(pane)
 	case action == "maximize" && pane != "":
@@ -647,9 +649,9 @@ func doctor(a *app.App) error {
 	report := func(label string, e error) {
 		if e != nil {
 			failed = true
-			fmt.Printf("FAIL %-18s %s\n", label, e)
+			fmt.Printf("FAIL %-18s %s\n", i18n.Context(label), e)
 		} else {
-			fmt.Printf("OK   %s\n", label)
+			fmt.Printf("OK   %s\n", i18n.Context(label))
 		}
 	}
 	_, e := exec.LookPath("tmux")
@@ -665,27 +667,27 @@ func doctor(a *app.App) error {
 	for _, d := range []string{a.Paths.Config, a.Paths.Data, a.Paths.State, a.Paths.Runtime} {
 		fi, e := os.Lstat(d)
 		if e == nil && fi.Mode().Perm() != 0700 {
-			e = errors.New("expected permissions 0700")
+			e = errors.New(i18n.T("doctor.permissions"))
 		}
 		report(d, e)
 	}
 	for _, entry := range extensions.Catalog(a.Paths.Config) {
 		if entry.Error != "" {
-			fmt.Println("WARN manifest:", entry.Error)
+			fmt.Println("WARN "+i18n.T("doctor.manifest"), entry.Error)
 			continue
 		}
 		p, e := a.Extensions.Detect(entry.Manifest)
 		if e != nil {
-			fmt.Printf("INFO %-18s not installed\n", entry.Manifest.ID)
+			fmt.Printf("INFO %-18s %s\n", entry.Manifest.ID, i18n.T("doctor.not_installed"))
 		} else {
-			fmt.Printf("INFO %-18s detected: %s\n", entry.Manifest.ID, p)
+			fmt.Printf("INFO %-18s %s\n", entry.Manifest.ID, i18n.T("doctor.detected", p))
 		}
 	}
 	states, e := a.Mux.Programs()
 	report("console server", e)
-	fmt.Printf("INFO %d known tmux programs; stopped metadata is never relaunched automatically\n", len(states))
+	fmt.Println("INFO " + i18n.T("doctor.programs", len(states)))
 	if failed {
-		return errors.New("diagnostics found failures")
+		return errors.New(i18n.T("doctor.failed"))
 	}
 	return nil
 }

@@ -12,6 +12,7 @@ import (
 	"shellstudio/internal/i18n"
 	"shellstudio/internal/mux"
 	"shellstudio/internal/store"
+	"shellstudio/internal/theme"
 )
 
 // editableHint follows the current language.
@@ -1050,7 +1051,7 @@ func Disconnected(a *app.App) error {
 			message = err.Error()
 		}
 		s.Erase()
-		s.Header(" " + f.Name + " ▾ ")
+		s.Header(" " + f.Name + " " + theme.Glyphs.Menu + " ")
 		if running {
 			s.Draw(2, i18n.T("ui.disc.disconnected", f.Name), Bold)
 			s.Draw(3, i18n.T("ui.disc.running"), Normal)
@@ -1121,7 +1122,7 @@ func Empty() error {
 	defer s.Close()
 	for {
 		s.Erase()
-		s.Header(" " + i18n.T("ui.empty.name") + " ▾ ")
+		s.Header(" " + i18n.T("ui.empty.name") + " " + theme.Glyphs.Menu + " ")
 		s.Draw(2, i18n.T("ui.empty.title"), Bold)
 		s.Draw(4, i18n.T("ui.empty.create"), Normal)
 		s.Draw(6, i18n.T("ui.empty.menu"), Normal)

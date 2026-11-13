@@ -79,3 +79,12 @@ func T(key string, args ...any) string {
 func Has(key string) bool { _, ok := catalog[key]; return ok }
 
 type entry struct{ es, en string }
+
+// Context translates the context name of a recorded error for display. The
+// name itself stays English in logs; an unknown name is shown as it is.
+func Context(name string) string {
+	if Has("ctx." + name) {
+		return T("ctx." + name)
+	}
+	return name
+}

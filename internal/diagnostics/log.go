@@ -188,7 +188,7 @@ func Command(args []string) string {
 	}
 	cmd := args[0]
 	if len(args) > 1 && strings.HasPrefix(cmd, "_") {
-		actions := " next previous layout drop move-before move-after ports upload move rename explorer remove kill start drag end menu consoles new views arrange resize minimize restore maximize tagmenu tag describe tab topmenu tags language panel-sizes rename-view close-view toggle-explorer toggle-minimized restore-in minprefs "
+		actions := " next previous layout drop move-before move-after ports upload move rename explorer remove kill start drag end menu consoles new views arrange resize minimize restore maximize tagmenu tag describe tab topmenu tags language panel-sizes rename-view close-view toggle-explorer toggle-minimized restore-in minprefs zoomed "
 		if strings.Contains(actions, " "+args[1]+" ") {
 			cmd += ":" + args[1]
 		}

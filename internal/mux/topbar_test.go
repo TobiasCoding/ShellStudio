@@ -35,6 +35,8 @@ func TestHeaderButtonSlotsMatchTheHeader(t *testing.T) {
 	tail := " " + theme.Glyphs.Minimize + "  " + theme.Glyphs.Maximize + "  " + theme.Glyphs.Menu + " "
 	// As a UTF-8 client draws it.
 	h := regexp.MustCompile(`#\{\?client_utf8,([^,]*),[^}]*\}`).ReplaceAllString(headerFormat(), "$1")
+	// Not zoomed.
+	h = regexp.MustCompile(`#\{\?#\{@ss_zoomed\},[^,]*,([^}]*)\}`).ReplaceAllString(h, "$1")
 	if !strings.HasSuffix(h, tail) {
 		t.Fatalf("header tail changed: %q", h[len(h)-40:])
 	}

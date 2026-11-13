@@ -208,6 +208,9 @@ func TagsDialog(s *Screen, a *app.App) {
 		if ev.Kind == ResizeEvent {
 			continue
 		}
+		if ev.Kind == KeyEvent && ev.Shift && (ev.Key == "up" || ev.Key == "down") {
+			ev = Event{Kind: KeyEvent, Key: "shift+" + ev.Key} // Moves the tag.
+		}
 		key, ok := listEvent(ev, &hm, &selected)
 		if !ok {
 			continue
@@ -278,7 +281,11 @@ func TagsDialog(s *Screen, a *app.App) {
 				message = err.Error()
 				break
 			}
-			if Confirm(s, i18n.T("tags.title"), i18n.T("tags.delete_confirm", current.Name, n)) {
+			question := i18n.T("tags.delete_confirm", current.Name, n)
+			if n == 1 {
+				question = i18n.T("tags.delete_confirm_one", current.Name)
+			}
+			if Confirm(s, i18n.T("tags.title"), question) {
 				if err := a.DeleteTag(current.ID); err != nil {
 					message = err.Error()
 				}

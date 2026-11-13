@@ -119,6 +119,12 @@ type Event struct {
 	X, Y, Button           int
 	Press, Release, Motion bool
 	Text                   string
+	// Shift is set for keys reported with the Shift modifier (CSI 1;2A).
+	// Key stays the plain name, so lists keep moving with Shift held.
+	Shift bool
+	// At is when the event's bytes arrived: double clicks are measured by
+	// arrival, not by when a busy program got to them.
+	At time.Time
 }
 
 func (e Event) Is(keys ...string) bool {
@@ -151,6 +157,7 @@ type Screen struct {
 	buf     []byte
 	pending []Event
 	paste   bool
+	arrived time.Time
 }
 
 // Open takes over the terminal of this pane or popup.
@@ -351,6 +358,7 @@ func (s *Screen) Read(timeout time.Duration) Event {
 	for {
 		if ev, rest, ok := parse(s.buf, false); ok {
 			s.buf = rest
+			ev.At = s.arrived
 			return ev
 		}
 		var escape <-chan time.Time
@@ -371,10 +379,14 @@ func (s *Screen) Read(timeout time.Duration) Event {
 				os.Exit(0) // The pane or popup closed.
 			}
 			stop()
+			if len(s.buf) == 0 {
+				s.arrived = time.Now()
+			}
 			s.buf = append(s.buf, b...)
 		case <-escape:
 			if ev, rest, ok := parse(s.buf, true); ok {
 				s.buf = rest
+				ev.At = s.arrived
 				return ev
 			}
 		case <-s.winch:
@@ -489,15 +501,19 @@ func parse(b []byte, flush bool) (Event, []byte, bool) {
 		if final == 'I' || final == 'O' {
 			return parse(rest, flush) // Focus reports: nothing to do.
 		}
-		name := params
+		name, shift := params, false
 		if j := strings.Index(name, ";"); j >= 0 {
-			name = name[:j] // Modifiers are not distinguished.
+			// xterm modifiers are 1 plus a bit mask: 1 Shift, 2 Alt, 4 Ctrl.
+			if m, e := strconv.Atoi(name[j+1:]); e == nil && m > 1 {
+				shift = (m-1)&1 != 0
+			}
+			name = name[:j]
 		}
 		if name == "1" && final != '~' {
 			name = ""
 		}
 		if k, ok := csiKeys[name+string(final)]; ok {
-			return Event{Kind: KeyEvent, Key: k}, rest, true
+			return Event{Kind: KeyEvent, Key: k, Shift: shift}, rest, true
 		}
 		return Event{Kind: KeyEvent, Key: "unknown"}, rest, true
 	case 'O':

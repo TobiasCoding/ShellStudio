@@ -30,7 +30,9 @@ func headerFormat() string {
 	return "#[fill=" + bg + "]" + base + cond("#[bold]", "") + " " + label + " " + base +
 		"#{?pane_dead,#[fg=black#,bg=yellow#,bold] " + i18n.T("tmux.header.finished") + " ,}" + base +
 		"#[align=right]#{?#{@ss_tag},#[fg=#{@ss_tag_fg}#,bg=#{@ss_tag_color}] #{@ss_tag} ,}" + base +
-		" " + g(theme.Glyphs.Minimize, theme.ASCII.Minimize) + "  " + g(theme.Glyphs.Maximize, theme.ASCII.Maximize) +
+		" " + g(theme.Glyphs.Minimize, theme.ASCII.Minimize) + "  " +
+		// ❐ while the view pane is zoomed (@ss_zoomed, see ZoomHook).
+		"#{?#{@ss_zoomed}," + g(theme.Glyphs.Unzoom, theme.ASCII.Unzoom) + "," + g(theme.Glyphs.Maximize, theme.ASCII.Maximize) + "}" +
 		"  " + g(theme.Glyphs.Menu, theme.ASCII.Menu) + " "
 }
 
@@ -267,6 +269,7 @@ func (m *Mux) ViewsControls(s Sizes) [][]string {
 		[]string{"set-hook", "-g", "client-attached", "run-shell " + Quote(m.Self("_resize_window", "--client", "#{hook_client}", "--immediate"))},
 		[]string{"set-hook", "-g", "client-session-changed", "run-shell " + Quote(m.Self("_resize_window", "--client", "#{hook_client}", "--immediate"))},
 		[]string{"set-hook", "-gu", "client-detached"},
+		m.zoomHook(),
 		// The top bar: views as tabs and the New console, Arrange and More
 		// menus. Window sizes leave its row (TopBarRows).
 		setg("status", "on"), setg("status-position", "top"), setg("status-interval", "0"),
@@ -409,6 +412,17 @@ func (m *Mux) deadPanelMenu() string {
 	return Join("display-menu", "-O", "-T", "#[align=centre] #{@ss_name} ", "-t", "=", "-x", "M", "-y", "M",
 		i18n.T("tmux.redo_panel"), "r", "respawn-pane -k",
 		i18n.T("tmux.close_panel"), "q", m.RunAction("remove --pane #{pane_id}"))
+}
+
+// zoomHook tells the console headers which pane of a view is zoomed: the
+// header lives in the programs server, which does not see the view's zoom.
+// A process runs only when the zoom flag of the window changes.
+func (m *Mux) zoomHook() []string {
+	return []string{"set-hook", "-g", "window-layout-changed", Script([]string{"if-shell", "-F",
+		// Unset means not zoomed: a window's first layout change spawns nothing.
+		"#{!=:#{window_zoomed_flag},#{?@ss_zoom_seen,#{@ss_zoom_seen},0}}",
+		Script([]string{"set-option", "-wF", "@ss_zoom_seen", "#{window_zoomed_flag}"},
+			[]string{"run-shell", "-b", m.Self("_action", "zoomed") + ` --pane "#{pane_id}"`})})}
 }
 
 // fromRight is the column of the pointer counted from the pane's right edge.

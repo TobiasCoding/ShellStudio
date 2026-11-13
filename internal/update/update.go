@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"shellstudio/internal/i18n"
 	"strconv"
 	"strings"
 	"time"
@@ -272,13 +273,13 @@ func (c *Client) Install(ctx context.Context, r Release, destination string) err
 
 // Prompt deliberately reads from the provided terminal, never an install pipe.
 func Prompt(in io.Reader, out io.Writer, current, candidate string) bool {
-	fmt.Fprintf(out, "ShellStudio %s is available (installed: %s). Install now? [y/N] ", strings.TrimPrefix(candidate, "v"), current)
+	fmt.Fprint(out, i18n.T("update.prompt", strings.TrimPrefix(candidate, "v"), current))
 	line, e := bufio.NewReader(io.LimitReader(in, 1024)).ReadString('\n')
 	if e != nil {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "y", "yes":
+	case "y", "yes", "s", "si", "sí":
 		return true
 	}
 	return false

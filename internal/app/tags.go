@@ -87,6 +87,43 @@ func (a *App) Maximize(pane string) error {
 	return e
 }
 
+// SyncZoom marks the console zoomed in the window of a views pane, and
+// unmarks the other consoles of that view, so their headers show ❐ or □.
+func (a *App) SyncZoom(pane string) error {
+	o, e := a.Mux.Run(true, "list-panes", "-t", pane, "-F", "#{window_zoomed_flag}\t#{pane_active}\t#{@ss_kind}\t#{@ss_console}")
+	if e != nil {
+		return e
+	}
+	var cmds [][]string
+	var consoles []string
+	for _, line := range strings.Split(strings.TrimSpace(o), "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) != 4 || f[2] != "console" || f[3] == "" {
+			continue
+		}
+		target := "=c-" + f[3] + ":"
+		if f[0] == "1" && f[1] == "1" {
+			cmds = append(cmds, []string{"set-option", "-t", target, "@ss_zoomed", "1"})
+		} else {
+			cmds = append(cmds, []string{"set-option", "-u", "-t", target, "@ss_zoomed"})
+		}
+		consoles = append(consoles, f[3])
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	// A console without a running program has no session: skip errors.
+	for _, c := range cmds {
+		a.Mux.Run(false, c...)
+	}
+	for _, id := range consoles {
+		if c, e := a.Store.Console(id); e == nil {
+			a.Mux.SetHeader(c)
+		}
+	}
+	return nil
+}
+
 // ValidTagName keeps tag names short enough for a badge and safe in formats.
 func ValidTagName(name string) error {
 	if name == "" || len([]rune(name)) > 24 {

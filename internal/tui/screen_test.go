@@ -37,3 +37,16 @@ func TestMouseMotionIsNotAClick(t *testing.T) {
 		t.Fatalf("motion became a click: %+v", e)
 	}
 }
+
+func TestShiftArrowsAreReported(t *testing.T) {
+	for in, want := range map[string]Event{
+		"\x1b[1;2A": {Kind: KeyEvent, Key: "up", Shift: true},
+		"\x1b[1;2B": {Kind: KeyEvent, Key: "down", Shift: true},
+		"\x1b[1;5A": {Kind: KeyEvent, Key: "up"},
+		"\x1b[A":    {Kind: KeyEvent, Key: "up"},
+	} {
+		if e, _, ok := parse([]byte(in), false); !ok || e != want {
+			t.Errorf("%q: %+v", in, e)
+		}
+	}
+}

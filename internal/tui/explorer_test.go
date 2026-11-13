@@ -206,11 +206,11 @@ func testExplorerFiltersTree(t *testing.T, fx *explorerFixture) {
 			t.Fatalf("%q is not a match:\n%s", gone, text)
 		}
 	}
-	y, x := rowOf(t, s, "▾ internal")
+	y, x := rowOf(t, s, "▼ internal")
 	if y != 3 {
 		t.Fatalf("internal at row %d:\n%s", y, text)
 	}
-	if y, _ = rowOf(t, s, "▾ tui"); y != 4 {
+	if y, _ = rowOf(t, s, "▼ tui"); y != 4 {
 		t.Fatalf("tui at row %d:\n%s", y, text)
 	}
 	y, x = rowOf(t, s, "explorer.go")
@@ -241,7 +241,7 @@ func testExplorerNoMatchEscAndEnter(t *testing.T, x *explorerFixture) {
 	if !strings.Contains(text, "README.md") || strings.Contains(text, "guide.md") {
 		t.Fatalf("tree not restored:\n%s", text)
 	}
-	if y, _ := rowOf(t, s, "▸ docs"); s.StyleAt(y, 1) != Highlight {
+	if y, _ := rowOf(t, s, "▶ docs"); s.StyleAt(y, 1) != Highlight {
 		t.Fatalf("selection not restored:\n%s", text)
 	}
 	if !strings.Contains(s.Frame()[1], i18n.T("explorer.search")) {
@@ -253,7 +253,7 @@ func testExplorerNoMatchEscAndEnter(t *testing.T, x *explorerFixture) {
 	runExplorer(t, a, view, root, s)
 	text = frameText(s)
 	y, _ := rowOf(t, s, "explorer.go")
-	if s.StyleAt(y, 1) != Highlight || !strings.Contains(text, "▸ app") || !strings.Contains(text, "README.md") {
+	if s.StyleAt(y, 1) != Highlight || !strings.Contains(text, "▶ app") || !strings.Contains(text, "README.md") {
 		t.Fatalf("not revealed:\n%s", text)
 	}
 	v, _ := a.Store.View(view)
@@ -278,7 +278,7 @@ func testExplorerScrollbar(t *testing.T, x *explorerFixture) {
 	s := newTestScreen(w, h, click(2+count-1, barX), release(2+count-1, barX))
 	runExplorer(t, a, view, root, s)
 	f := s.Frame()
-	if !strings.Contains(f[2+count-1], "f39.txt") || strings.Contains(frameText(s), "▾ ") {
+	if !strings.Contains(f[2+count-1], "f39.txt") || strings.Contains(strings.Join(f[2:], "\n"), "▼ ") {
 		t.Fatalf("not scrolled to the end:\n%s", frameText(s))
 	}
 	if r := []rune(f[2+count-1]); string(r[barX]) != "█" || string([]rune(f[2])[barX]) != "│" {
@@ -288,7 +288,7 @@ func testExplorerScrollbar(t *testing.T, x *explorerFixture) {
 	drag := Event{Kind: MouseEvent, Y: 2, X: barX, Press: true, Motion: true}
 	s = newTestScreen(w, h, click(2+count-1, barX), Event{Kind: TimeoutEvent}, drag, release(2, barX))
 	runExplorer(t, a, view, root, s)
-	if !strings.Contains(s.Frame()[2], "▾ ") || s.StyleAt(2, 1) != Highlight {
+	if !strings.Contains(s.Frame()[2], "▼ ") || s.StyleAt(2, 1) != Highlight {
 		t.Fatalf("not dragged to the top:\n%s", frameText(s))
 	}
 	// Without overflow there is no bar.

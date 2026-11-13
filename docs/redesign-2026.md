@@ -77,8 +77,11 @@ Los atajos F2, F3, F4, F5, F7, F9 y F10 y los menús existentes se mantienen.
 - tmux guarda como mucho 15 caracteres de un rango de la línea de estado. Por
   eso cada pestaña se identifica con «t» y los 12 primeros caracteres del ID de
   su vista (ver [redesign-spike.md](redesign-spike.md)).
-- El botón `□` no cambia a `❐` mientras el panel está maximizado: la cabecera
-  la dibuja el servidor de programas, que no conoce el zoom de la vista.
+- La cabecera la dibuja el servidor de programas, que no conoce el zoom de la
+  vista. Un hook `window-layout-changed` del servidor de vistas lanza un
+  proceso solo cuando cambia el zoom y publica `@ss_zoomed` para que el botón
+  muestre `❐`. Si una consola está en varias vistas, el indicador refleja la
+  última vista que cambió su zoom.
 
 ## Comprobaciones
 
@@ -111,3 +114,68 @@ Los atajos F2, F3, F4, F5, F7, F9 y F10 y los menús existentes se mantienen.
 - **Revisión visual** en 160×45 y 80×24, en español y en inglés, comparada con
   la maqueta. Con menos de 44 columnas en la columna izquierda, Minimizadas
   oculta la fecha y conserva la consola y la etiqueta.
+
+## Comparación con la maqueta
+
+| Maqueta | Implementación |
+|---|---|
+| `VISTAS` + pestañas, la actual resaltada | Igual: rangos clicables, acento azul en la vista actual |
+| `Nueva consola ▼  Distribuir ▼  Más ▼` | Igual, como menús nativos bajo el puntero |
+| `ARCHIVOS ▼` y «Buscar archivos» | Igual; la búsqueda filtra el árbol |
+| Divisor `::::` | Borde horizontal de tmux (no admite texto en el borde) |
+| `MINIMIZADAS 4` y `Columnas ▼` | Igual |
+| «Buscar consolas» y `Etiqueta ▼` | Igual; el filtro muestra la etiqueta elegida |
+| Tabla Creada ↓ / Consola / Etiqueta | Igual, con filas de dos líneas y fondo azul oscuro en la selección |
+| Insignias con `▼` | Fondo del color de la etiqueta y `▼` (un clic abre el menú) |
+| Pie `Claude · Backend  ● En ejecución` | Igual |
+| `[ Restaurar ] [ Renombrar ] [ ⋯ ]` | Igual |
+| Cabeceras `Tipo · Nombre  ─ □ ▼`, la activa en azul | Igual; `❐` cuando el panel está ampliado |
+
+Columna izquierda en 160×45 con cuatro consolas minimizadas, en español (las
+consolas de prueba son de tipo Terminal):
+
+```
+ F10 Salir                                      ┃
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫
+ MINIMIZADAS  4                     Columnas ▼  ┃
+  Buscar consolas                  Etiqueta ▼   ┃
+ Creada ↓  Consola          Etiqueta            ┃
+ 05/11     Terminal · Docs   Listo        ▼     ┃
+ 07:55     Guía de instal…                      ┃
+ 05/11     Terminal · Res…   Pendiente    ▼     ┃
+ 07:55     Validar dispon…                      ┃
+ 05/11     Terminal · Int…   En curso     ▼     ┃
+ 07:55     Editor visual                        ┃
+ 05/11     Terminal · Bac…   Por revisar  ▼     ┃
+ 07:55     Revisión de we…                      ┃
+                                                ┃
+                                                ┃
+                                                ┃
+                                                ┃
+                                                ┃
+─────────────────────────────────────────────── ┃
+ Terminal · Backend             ● En ejecución  ┃
+ [ Restaurar ]  [ Renombrar ]  [ ⋯ ]            ┃
+```
+
+Además de la captura de texto, la salida con colores (`capture-pane -e`) se
+dibujó como imagen con DejaVu Sans Mono en 160×45 y en 80×24, y cada imagen se
+comparó junto a la maqueta. En 160×45 coinciden:
+- la barra de vistas con la pestaña activa en azul;
+- `ARCHIVOS ▼` con su búsqueda;
+- los marcadores `▼`/`▶` del árbol;
+- el divisor entre el árbol y Minimizadas;
+- `MINIMIZADAS 4` con `Columnas ▼`;
+- la búsqueda y el filtro;
+- la fila en blanco antes del encabezado de la tabla;
+- la tabla de dos líneas con las insignias de color y la selección en azul
+  oscuro;
+- el pie con el estado en verde y los botones;
+- la cabecera activa en azul con `─ □ ▼`.
+
+En 80×24 la columna izquierda mide 26 columnas. Minimizadas oculta las fechas
+y `Columnas ▼`, y conserva la búsqueda, la consola, la etiqueta y los botones
+Restaurar y `⋯` (Renombrar sigue en `⋯` y en la tecla R). Por debajo de
+70 columnas la columna izquierda se oculta; los menús siguen en la barra
+superior y en F2.
+

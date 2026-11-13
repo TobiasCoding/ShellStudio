@@ -603,7 +603,7 @@ func explore(a *app.App, view, root, tree string, s *Screen, onStart func(flush 
 		item := a.CurrentError()
 		var errorLines []string
 		if item != nil {
-			errorLines = Wrap(item.Context+": "+item.Message, max(8, s.W-3))
+			errorLines = Wrap(i18n.Context(item.Context)+": "+item.Message, max(8, s.W-3))
 			if len(errorLines) == 0 {
 				errorLines = []string{i18n.T("ui.tree.error")}
 			}
@@ -669,9 +669,9 @@ func explore(a *app.App, view, root, tree string, s *Screen, onStart func(flush 
 					// The filter opens the folders of its matches only.
 					open = i+1 < len(rows) && rows[i+1].depth > r.depth
 				}
-				marker = "▸ "
+				marker = theme.Glyphs.Closed + " "
 				if open {
-					marker = "▾ "
+					marker = theme.Glyphs.Open + " "
 				}
 			}
 			leaf := path.Base(r.rel)

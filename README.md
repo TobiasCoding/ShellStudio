@@ -30,6 +30,8 @@ External programs have their own licenses. No agent installation is required.
   choose a language under More ▸ Language.
 - The width of the left column and the height of the Minimized panel are saved
   per view.
+- The maximize button shows ❐ while its panel is zoomed. Tags also move with
+  Shift+↑/↓.
 - Terminal replies that arrive split or late (common over SSH and with Windows
   Terminal) no longer move consoles or type digits into them. Moving a console
   before or after its neighbor is now Alt+< / Alt+>.

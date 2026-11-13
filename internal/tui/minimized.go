@@ -350,7 +350,11 @@ func (st *minState) draw(s *Screen) {
 	st.hits.Add(1, 1, fieldW, 1, "search")
 	s.DrawAt(1, 1+fieldW+1, filter, filterStyle)
 	st.hits.Add(1, 1+fieldW+1, fw, 1, "filter")
-	// Table header.
+	// Table header, a blank row below the search when there is room.
+	headY := 2
+	if H >= 14 {
+		headY = 3
+	}
 	layout := st.layout(W)
 	for _, c := range layout {
 		t := colTitle(c.name)
@@ -361,11 +365,11 @@ func (st *minState) draw(s *Screen) {
 				t += " " + theme.Glyphs.SortUp
 			}
 		}
-		s.DrawAt(2, c.x, pad(t, c.w), Bold)
-		st.hits.Add(2, c.x, c.w, 1, "sort:"+c.name)
+		s.DrawAt(headY, c.x, pad(t, c.w), Bold)
+		st.hits.Add(headY, c.x, c.w, 1, "sort:"+c.name)
 	}
 	// Rows: two lines each, between the table header and the footer.
-	top, bottom := 3, H-3
+	top, bottom := headY+1, H-3
 	st.listRows = max(1, (bottom-top)/2)
 	if len(st.rows) == 0 {
 		msg := i18n.T("min.empty")
@@ -451,7 +455,10 @@ func (st *minState) draw(s *Screen) {
 		s.DrawAt(H-2, 1, pad(r.Label, W-4-sw), Bold)
 		s.DrawAt(H-2, W-2-sw, status, style)
 		x := Button(s, &st.hits, H-1, 1, i18n.T("min.restore"), "restore", Cyan)
-		x = Button(s, &st.hits, H-1, x+2, i18n.T("min.rename"), "rename", Normal)
+		// A narrow panel keeps Restore and ⋯; Rename is also in ⋯ and on R.
+		if x+2+ButtonWidth(i18n.T("min.rename"))+2+ButtonWidth(theme.Glyphs.More) < W-1 {
+			x = Button(s, &st.hits, H-1, x+2, i18n.T("min.rename"), "rename", Normal)
+		}
 		Button(s, &st.hits, H-1, x+2, theme.Glyphs.More, "more", Normal)
 	} else if st.message == "" {
 		s.DrawAt(H-2, 1, "", Normal)
@@ -598,8 +605,12 @@ func (st *minState) click(s *Screen, a *app.App, ev Event) {
 		st.act(s, a, "tag")
 	case strings.HasPrefix(zone, "row:"):
 		id := strings.TrimPrefix(zone, "row:")
-		double := id == st.lastClickRow && time.Since(st.lastClick) < 400*time.Millisecond
-		st.selected, st.lastClickRow, st.lastClick = id, id, time.Now()
+		at := ev.At
+		if at.IsZero() {
+			at = time.Now()
+		}
+		double := id == st.lastClickRow && at.Sub(st.lastClick) < 500*time.Millisecond
+		st.selected, st.lastClickRow, st.lastClick = id, id, at
 		if double {
 			st.lastClickRow = ""
 			st.act(s, a, "restore")

@@ -51,13 +51,13 @@ func TagText(bg int) int {
 func Colour(n int) string { return "colour" + strconv.Itoa(n) }
 
 // Glyph set for buttons and markers. Each glyph is one column wide.
-type GlyphSet struct{ Minimize, Maximize, Unzoom, Menu, Dot, More, SortDown, SortUp, Grip string }
+type GlyphSet struct{ Minimize, Maximize, Unzoom, Menu, Dot, More, SortDown, SortUp, Grip, Open, Closed string }
 
 var (
 	// Glyphs are drawn by every client ShellStudio attaches (always UTF-8).
-	Glyphs = GlyphSet{"─", "□", "❐", "▼", "●", "⋯", "↓", "↑", "::::"}
+	Glyphs = GlyphSet{"─", "□", "❐", "▼", "●", "⋯", "↓", "↑", "::::", "▼", "▶"}
 	// ASCII replaces them for a client attached without UTF-8 mode.
-	ASCII = GlyphSet{"_", "O", "o", "v", "*", "...", "v", "^", "::::"}
+	ASCII = GlyphSet{"_", "O", "o", "v", "*", "...", "v", "^", "::::", "v", ">"}
 )
 
 // TmuxGlyph chooses the glyph by the client's UTF-8 mode inside a tmux format.

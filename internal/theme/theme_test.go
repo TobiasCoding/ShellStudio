@@ -8,7 +8,7 @@ import (
 )
 
 func TestGlyphsAreOneColumn(t *testing.T) {
-	for _, g := range []string{Glyphs.Minimize, Glyphs.Maximize, Glyphs.Unzoom, Glyphs.Menu, Glyphs.Dot, Glyphs.More, Glyphs.SortDown, Glyphs.SortUp} {
+	for _, g := range []string{Glyphs.Minimize, Glyphs.Maximize, Glyphs.Unzoom, Glyphs.Menu, Glyphs.Dot, Glyphs.More, Glyphs.SortDown, Glyphs.SortUp, Glyphs.Open, Glyphs.Closed} {
 		if w := runewidth.StringWidth(g); w != 1 {
 			t.Errorf("%q is %d columns", g, w)
 		}

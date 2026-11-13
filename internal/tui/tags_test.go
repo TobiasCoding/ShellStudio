@@ -146,7 +146,7 @@ func TestTagsDialogLifecycle(t *testing.T) {
 	}
 	s = newTestScreen(72, 16, events("down", "down", "down", "delete")...)
 	runTest(t, s, func() { TagsDialog(s, a) })
-	if !strings.Contains(frameText(s), "Delete the tag Deploy? 1 consoles") {
+	if !strings.Contains(frameText(s), "Delete the tag Deploy? One console will be left untagged.") {
 		t.Fatal(frameText(s))
 	}
 	s = newTestScreen(72, 16, events("down", "down", "down", "delete", "esc", "esc")...)

@@ -99,3 +99,44 @@ func TestEveryKeyInTheCodeExists(t *testing.T) {
 		t.Fatalf("only %d keys found: wrong root?", found)
 	}
 }
+
+func TestErrorContextsTranslateForDisplay(t *testing.T) {
+	defer SetLang(Lang())
+	SetLang("es")
+	if Context("Explorer shortcut") != "Atajo del explorador" || Context("something new") != "something new" {
+		t.Fatal(Context("Explorer shortcut"))
+	}
+	SetLang("en")
+	if Context("Explorer shortcut") != "Explorer shortcut" {
+		t.Fatal("English keeps the recorded name")
+	}
+}
+
+// Every literal context passed to RecordError or main's report() has a
+// display translation.
+func TestEveryErrorContextIsTranslated(t *testing.T) {
+	re := regexp.MustCompile(`(?:RecordError\([^,\n]+, |report\()"([^"]+)"`)
+	found := 0
+	for _, root := range []string{"../../internal", "../../cmd"} {
+		filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+				return err
+			}
+			b, _ := os.ReadFile(p)
+			for _, m := range re.FindAllSubmatch(b, -1) {
+				name := string(m[1])
+				if name == "configuration" || name == "console server" || name == "tmux" || name == "database" {
+					continue // doctor's report labels, not recorded errors
+				}
+				found++
+				if !Has("ctx." + name) {
+					t.Errorf("%s: context %q has no ctx. translation", p, name)
+				}
+			}
+			return nil
+		})
+	}
+	if found < 20 {
+		t.Fatalf("only %d contexts found", found)
+	}
+}

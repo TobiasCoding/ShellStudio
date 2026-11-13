@@ -157,7 +157,8 @@ func TestMinimizedPanelNarrowKeepsConsoleAndTag(t *testing.T) {
 	s := newTestScreen(26, 14)
 	runTest(t, s, func() { runMinimized(s, a, view, "%9") })
 	f := frameText(s)
-	if strings.Contains(f, "Created") || !strings.Contains(f, "Console") || !strings.Contains(f, "Tag") {
+	if strings.Contains(f, "Created") || !strings.Contains(f, "Console") || !strings.Contains(f, "Tag") ||
+		!strings.Contains(f, "[ Restore ]") || !strings.Contains(f, "[ ⋯ ]") || strings.Contains(f, "[ Rename") {
 		t.Fatalf("\n%s", f)
 	}
 	for _, row := range s.Frame() {

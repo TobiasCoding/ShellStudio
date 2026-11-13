@@ -194,7 +194,9 @@ class Integration(unittest.TestCase):
         self.assertEqual(len(tree), 1)
         self.assertEqual((tree[0]["x"], tree[0]["y"]), ("0", "0"))
         self.assertGreaterEqual(int(tree[0]["w"]), 17, "explorer collapsed to an unreadable sliver")
-        self.assertIn("F2 Menu", self.tmux("views", "capture-pane", "-p", "-t", tree[0]["id"]))
+        # The Minimized panel splits the explorer after it first draws: wait
+        # for the redraw at its final height.
+        self.wait_for(lambda: "F2 Menu" in self.tmux("views", "capture-pane", "-p", "-t", tree[0]["id"]))
         return tree[0]
 
     def test_current_and_explicit_directory_workspace(self):
@@ -867,7 +869,8 @@ class Integration(unittest.TestCase):
             # The view the terminal is looking at.
             sessions = self.tmux("views", "list-clients", "-F", "#{session_name}").split()
             view = sessions[0][2:] if sessions else None
-        rows = self.tmux("views", "list-panes", "-s", "-t", "=v-" + view, "-F",
+        # The window on screen only: a render briefly moves panels to helper windows.
+        rows = self.tmux("views", "list-panes", "-t", "=v-" + view + ":view", "-F",
                          "#{pane_id}|#{@ss_kind}|#{@ss_console}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}") if view else ""
         for row in rows.splitlines():
             p = dict(zip(("id", "kind", "console", "x", "y", "w", "h"), row.split("|")))
@@ -922,21 +925,33 @@ class Integration(unittest.TestCase):
         # □ zooms the pane, ─ minimizes the console without ending it.
         self.click_header_button(t, self.pane_of("console", consoles[1]["ID"]), 4)
         self.wait_for(lambda: self.tmux("views", "display-message", "-p", "-t", "=v-" + beta["ID"] + ":", "#{window_zoomed_flag}") == "1")
+        zoomed = lambda c: self.tmux("programs", "show-options", "-qv", "-t", "=c-" + c["ID"] + ":", "@ss_zoomed")
+        self.wait_for(lambda: zoomed(consoles[1]) == "1")  # its header shows ❐
         self.tmux("views", "resize-pane", "-Z", "-t", self.pane_of("console", consoles[1]["ID"])["id"])
+        self.wait_for(lambda: zoomed(consoles[1]) == "")
         self.click_header_button(t, self.pane_of("console", consoles[0]["ID"]), 7)
         self.wait_for(lambda: self.pane_of("console", consoles[0]["ID"]) is None)
         self.assertEqual(self.program_pid(consoles[0]["ID"]), pid)
         with self.db() as db:
             rows = db.execute("SELECT console_id, minimized FROM members WHERE view_id=? ORDER BY position", (beta["ID"],)).fetchall()
         self.assertEqual(rows, [(consoles[0]["ID"], 1), (consoles[1]["ID"], 0)])
+        # The render that minimized it joins the panel back when it ends.
+        self.wait_for(lambda: self.pane_of("minimized") is not None)
         panel = self.pane_of("minimized")
-        self.assertIsNotNone(panel)
         self.wait_text(panel, "Terminal · Two")
         # A double click on its row restores it, in its place, same program.
-        x, y = int(panel["x"]) + 14, int(panel["y"]) + 3
-        for _ in range(2):
-            t.mouse(0, x, y)
-            t.mouse(0, x, y, release=True, wait=0.05)
+        # The table row (not the footer) of the console, on a settled frame.
+        def table_row():
+            out = subprocess.run(["tmux", "-u", "-S", str(self.socket("views")), "capture-pane", "-p", "-t", panel["id"]],
+                                 env=self.env, capture_output=True, text=True, timeout=5).stdout.split("\n")
+            return next((i for i, r in enumerate(out) if "Terminal · Two" in r and "No tag" in r), None)
+        self.wait_for(lambda: table_row() is not None)
+        panel = self.pane_of("minimized")
+        x, y = int(panel["x"]) + 14, int(panel["y"]) + table_row()
+        # A terminal sends a double click as press/release twice in a row.
+        click = f"\x1b[<0;{x+1};{y+1+TOP_BAR_ROWS}M\x1b[<0;{x+1};{y+1+TOP_BAR_ROWS}m"
+        t.send((click * 2).encode(), 0.5)
+        self.wait_text(panel, "No minimized consoles", timeout=20)
         self.wait_for(lambda: self.pane_of("console", consoles[0]["ID"]) is not None)
         ours = {c["ID"] for c in consoles}
         self.assertEqual([p["console"] for p in self.panes() if p["console"] in ours],
@@ -958,7 +973,8 @@ class Integration(unittest.TestCase):
         self.assertEqual(self.tmux("programs", "show-options", "-qv", "-t", "=c-" + consoles[0]["ID"] + ":", "@ss_tag"), tags[1][1])
         for c in consoles[:2]:
             self.cli("_action", "minimize", "--pane", panel["id"], "--session", "c-" + c["ID"])
-        capture = lambda: self.tmux("views", "capture-pane", "-p", "-t", self.pane_of("minimized")["id"])
+        # The panel keeps its pane ID when a render moves it aside and back.
+        capture = lambda: self.tmux("views", "capture-pane", "-p", "-t", panel["id"])
         self.wait_for(lambda: "Terminal · Api" in capture() and "Terminal · Web" in capture())
         self.assertIn("MINIMIZED  2", capture())
         # Filter by tag through the stored preference, as its menu does.
@@ -968,6 +984,7 @@ class Integration(unittest.TestCase):
         self.cli("_action", "minprefs", "--target", "filter:")
         self.wait_for(lambda: "Terminal · Web" in capture())
         # Search: click the field and type.
+        self.wait_for(lambda: self.pane_of("minimized") is not None)
         panel = self.pane_of("minimized")
         t.mouse(0, int(panel["x"]) + 3, int(panel["y"]) + 1)
         t.mouse(0, int(panel["x"]) + 3, int(panel["y"]) + 1, release=True)
@@ -1044,6 +1061,39 @@ class Integration(unittest.TestCase):
         for text in ("VISTAS", "Nueva consola", "Buscar archivos", "MINIMIZADAS", "Buscar consolas"):
             t.expect(text)
         self.assertEqual(self.tmux("views", "show-options", "-gqv", "@ss_lang"), "es")
+
+
+    def test_client_without_utf8_sees_ascii_buttons(self):
+        """ShellStudio attaches with tmux -u; a foreign client without UTF-8
+        mode gets one-column ASCII buttons instead of glyphs it cannot draw."""
+        self.env.update(LANG="C", LC_ALL="C")
+        view = json.loads(self.cli("new-view", "Main"))
+        self.cli("launch", "--view", view["ID"], "--name", "One")
+        t = self.terminal()
+        t.resize(120, 30)
+        t.expect("□")
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.execvpe("tmux", ["tmux", "-S", str(self.socket("views")), "attach-session", "-r", "-t", "=v-" + view["ID"]],
+                       {**self.env, "TERM": "xterm-256color"})
+        try:
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
+            out, deadline = b"", time.monotonic() + 20
+            while time.monotonic() < deadline and b"New console v" not in out:
+                ready, _, _ = select.select([fd], [], [], 0.2)
+                if ready:
+                    try:
+                        out += os.read(fd, 65536)
+                    except OSError:
+                        break
+            self.assertIn(b"New console v", out)
+            self.assertNotIn("▼".encode(), out)
+            clients = self.tmux("views", "list-clients", "-F", "#{client_utf8}").split()
+            self.assertIn("0", clients)
+        finally:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            os.close(fd)
 
 
 if __name__ == "__main__":

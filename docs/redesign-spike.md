@@ -64,3 +64,35 @@ que sus clientes están en modo UTF-8 aunque el locale sea `C`. Así lo verifica
   un cliente ajeno que se adjunte sin `-u`.
 - La TUI dibuja siempre en UTF-8 porque corre dentro de clientes `-u`.
 - Todos los glifos ocupan una columna (`go-runewidth` sin modo East Asian).
+
+## 4. Mosh (medido con Mosh 1.4.0)
+
+`mosh-server new -i 127.0.0.1 …` local, con `mosh-client` en un PTY de
+140×40 (`MOSH_KEY` del `MOSH CONNECT`), registrando lo que llega a la terminal
+del usuario.
+
+**Portapapeles (OSC 52).** Dentro de la sesión se emitió `ESC]52;;…` (sin
+selector) y después `ESC]52;c;…`:
+
+| Secuencia emitida | Llega al cliente |
+|---|---|
+| `ESC]52;;RU1QVFk=` | no: Mosh la descarta |
+| `ESC]52;c;Q0xJUA==` | sí: `ESC]52;c;Q0xJUA==` |
+
+Esto confirma el selector de `terminal-overrides[1]`, que pone `c` cuando la
+selección está vacía. Sigue igual tras el rediseño, y lo verifica también
+`test_clipboard_uses_mosh_compatible_selector_through_nested_tmux`.
+
+**Colores e interfaz.** Dentro de Mosh se corrió ShellStudio con datos
+aislados:
+
+| Colores del servidor | TERM en tmux | Resultado |
+|---|---|---|
+| `-c 256` (lo que pasa `mosh` con una terminal de 256 colores) | `xterm-256color` | Llegan 174 SGR `38;5`/`48;5` con los índices del tema: fondos 16, 234, 235, 24 y 33; texto 231, 250, 252, 244, 240 y 33. Llegan `VIEWS`, `New console`, `MINIMIZED` y `▼` (8 veces). Cero SGR truecolor (`38;2`/`48;2`). |
+| sin `-c` (8 colores) | `xterm` | tmux degrada la paleta a ANSI: el acento pasa a azul (`1;34`) y el panel activo a `37;44`. La interfaz sigue legible. |
+
+**Decisión:** el tema usa solo índices de la paleta de 256 colores. Se ve
+igual a través de Mosh y se degrada a ANSI con terminales de 8 colores. La
+barra superior es una línea de estado de tmux y no consulta a la terminal
+del usuario. Se mantienen `escape-time` 50 ms y `XT@` del arreglo de
+reportes partidos.
